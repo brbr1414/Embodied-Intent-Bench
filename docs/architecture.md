@@ -173,8 +173,13 @@ Adding a registry entry, a config file, or a new module is fine; adding task-spe
 7. Add a new network trace.
 8. Add a future external simulator adapter.
 
-At least one test must *demonstrate* replaceability — e.g. running the same episode with
-two different policies, or two different executors, with no runner change.
+At least one test must *demonstrate* replaceability. As of `feature/v1-metrics-and-cli`,
+criteria 1–4 are exercised: a second task registered without touching the shipped registry,
+a policy defined as a bare class conforming to the protocol, an executor swapped through the
+real runner, and a replacement battery model injected into `StateManager`. Two tests also
+check the core rule mechanically rather than trusting it — `EpisodeRunner` is parsed to
+confirm it imports no task or policy module and never reads `task_id`, and
+`episode_metrics.py` is parsed to confirm it names no task-specific metric.
 
 ## 9. Anticipated but not implemented
 
@@ -202,6 +207,8 @@ These shape interfaces only. **Do not implement them without an explicit request
 | Policies + policy registry | `aerointentbench/policies/` |
 | Task evidence trackers and evaluators + task registry | `aerointentbench/tasks/` |
 | Generic constraint and aggregate metrics | `aerointentbench/metrics/` |
-| Composition root / CLI | `aerointentbench/run_benchmark.py` |
+| Composition root | `aerointentbench/benchmark.py` |
+| CLI | `aerointentbench/run_benchmark.py` |
+| Component registries | `aerointentbench/registry.py` + one per package |
 | Specifications and fixtures | `data/` |
 | Schema migrations (future) | `aerointentbench/schemas/loading.py` |

@@ -3,21 +3,37 @@
 Responsibility
 --------------
 Derive per-episode metrics and cross-episode aggregates from the structured records the
-simulator emits. Metrics are computed from *records*, never by reaching into live
-simulator state, so a new metric can be added later without rerunning an episode as
-long as the step log already carried the data.
+simulator emits. Metrics are computed from *records*, never by reaching into live simulator
+state, so a new metric can be added later without rerunning an episode as long as the step
+log already carried the data.
 
-Planned modules (added in ``feature/v1-metrics-and-cli``)
----------------------------------------------------------
-- ``episode_metrics``   -- generic constraint evaluation (deadline, battery, communication,
-                           privacy) plus mission success, resources, switches, violations
-                           and violation margins.
-- ``aggregate_metrics`` -- success rates and means across an episode suite.
+Modules
+-------
+- ``episode_metrics``   -- the five hard constraints, their violation margins, resource
+                           totals, and mission success.
+- ``aggregate_metrics`` -- success rates and means across an episode suite. Mission Success
+                           Rate is the primary metric; the other rates decompose it.
 
 Boundaries
 ----------
-Mission-success logic consumes a standardised ``TaskEvaluationResult``
-(``metric_name`` / ``value`` / ``operator`` / ``threshold`` / ``success`` / ``details``).
-It must never reference a task-specific field such as ``target_f1`` by name. Adding a
-task metric must not require editing this package.
+Mission-success logic consumes a standardised ``TaskEvaluationResult`` and must never
+reference a task-specific field such as ``target_f1``. Adding a task metric must not require
+editing this package.
 """
+
+from aerointentbench.metrics.aggregate_metrics import AggregateMetrics, aggregate_metrics
+from aerointentbench.metrics.episode_metrics import (
+    CONSTRAINT_NAMES,
+    ConstraintOutcome,
+    EpisodeMetrics,
+    compute_episode_metrics,
+)
+
+__all__ = [
+    "CONSTRAINT_NAMES",
+    "AggregateMetrics",
+    "ConstraintOutcome",
+    "EpisodeMetrics",
+    "aggregate_metrics",
+    "compute_episode_metrics",
+]

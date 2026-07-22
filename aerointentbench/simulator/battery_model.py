@@ -45,6 +45,14 @@ class EnergyUsage:
             communication_j=self.communication_j + other.communication_j,
         )
 
+    def __sub__(self, other: EnergyUsage) -> EnergyUsage:
+        """Componentwise difference, for recovering one step's usage from two cumulatives."""
+        return EnergyUsage(
+            flight_j=self.flight_j - other.flight_j,
+            compute_j=self.compute_j - other.compute_j,
+            communication_j=self.communication_j - other.communication_j,
+        )
+
     def to_dict(self) -> dict[str, float]:
         return {
             "flight_energy_j": self.flight_j,

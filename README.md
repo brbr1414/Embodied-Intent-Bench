@@ -18,10 +18,10 @@ control, or open-ended language understanding.
 
 ## Status
 
-🚧 **V1 in progress.** This branch (`feature/v1-spec-and-scaffold`) establishes the
-specification, documentation, packaging, and package/test skeleton. Domain logic lands in
-the subsequent branches listed in [`docs/branching.md`](docs/branching.md); the CLI is a
-stub until `feature/v1-metrics-and-cli`.
+**V1 runnable.** JSON inputs → a deterministic one-second decision loop → policy →
+executor → state and evidence updates → termination → metrics JSON. Remaining work is
+integration testing and documentation cleanup (`test/v1-end-to-end`); see
+[`docs/branching.md`](docs/branching.md).
 
 ## The loop
 
@@ -66,18 +66,47 @@ python -m venv .venv
 The package declares **zero runtime dependencies**; `pytest` is the only development
 dependency.
 
-## Usage (target interface — not yet runnable)
+## Usage
 
 ```bash
+# one episode
 python -m aerointentbench.run_benchmark \
   --episode data/episodes/episode_001.json \
   --contract data/contracts/contract_001.json \
   --policy rule_based \
   --output results/episode_001_rule_based.json
+
+# the whole shipped suite, aggregated
+python -m aerointentbench.run_benchmark --suite \
+  --contract data/contracts/contract_001.json \
+  --policy rule_based \
+  --output results/suite_rule_based.json
 ```
 
-A suite mode will run a fixture set and emit aggregate metrics. Both arrive in
-`feature/v1-metrics-and-cli`.
+```
+policy: rule_based   executor: profile
+episode           success  quality       MB    batt   time s  switch
+EPISODE_001          PASS    0.872      380   0.327      900       1
+EPISODE_002          PASS    0.837      380   0.427      900       2
+EPISODE_003          PASS    0.872      380   0.277      900       1
+
+Mission Success Rate: 100% over 3 episode(s)
+  quality 100%   deadline 100%   battery 100%   communication 100%   privacy 100%
+```
+
+Useful flags: `--hide-profiles` withholds public configuration profiles from the policy;
+`--include-detail` adds the step log and raw evidence (large, and it contains
+ground-truth-derived fields — do not publish a detailed result file).
+
+### Measured baselines
+
+| Policy | Mission Success Rate | Why it fails |
+|---|---:|---|
+| `always_local_light` | 0 % | never reaches the quality threshold |
+| `always_local_strong` | 67 % | competitive; loses where remote was worth spending on |
+| `always_remote_strong` | 0 % | highest quality of all, always over the communication budget |
+| `rule_based` | 100 % | uses remote while bandwidth is high, then rations |
+| `rule_based --hide-profiles` | 0 % | cannot tell configurations apart without a quality tier |
 
 ## Repository layout
 

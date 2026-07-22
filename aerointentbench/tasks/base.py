@@ -20,11 +20,14 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
 from aerointentbench.executor.base import ExecutionResult
 from aerointentbench.schemas.common import ComparisonOperator
 from aerointentbench.schemas.contract import Contract
+from aerointentbench.schemas.episode import Episode
+from aerointentbench.schemas.profile import ProfileCatalog
 from aerointentbench.schemas.runtime_state import EvidenceSummary
 from aerointentbench.schemas.task_spec import TaskSpec
 
@@ -166,3 +169,25 @@ class TaskDefinition(Protocol):
         ...
 
     def create_evaluator(self) -> TaskEvaluator: ...
+
+    def load_ground_truth(self, directory: Path, episode: Episode) -> GroundTruth | None:
+        """Find and load this episode's answers from a ground-truth directory.
+
+        The task owns the lookup because only it knows what its answers are keyed on --
+        human search keys on the frame stream, a future task might key on something else.
+        Putting the rule here keeps the composition root from learning any of it.
+
+        Returns ``None`` when no answers exist, which is legitimate: a run may exercise the
+        loop and its resource accounting without scoring quality.
+        """
+        ...
+
+    def create_prediction_source(
+        self, ground_truth: GroundTruth | None, profiles: ProfileCatalog
+    ) -> object | None:
+        """Return a ``PredictionSource`` for a simulating executor, or ``None``.
+
+        Only profile-driven execution needs this; a replay backend carries its own
+        predictions. ``None`` runs the executor in resource-only mode.
+        """
+        ...
