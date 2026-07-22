@@ -2,26 +2,41 @@
 
 Responsibility
 --------------
-Implement ``Policy.select_config(contract, state, configs) -> str``. A policy sees only
-the contract, the policy-visible runtime state, and the allowed configuration
-descriptions. Public configuration profiles are visible only when the benchmark mode
-explicitly grants them -- never via an ad-hoc import.
+Implement ``Policy.select_config(contract, state, configs) -> str``. A policy sees only the
+contract, the policy-visible runtime state, and the allowed configuration descriptions.
+Public configuration profiles are visible only when the benchmark mode grants them --
+injected at construction, never via an ad-hoc import.
 
-Planned modules (added in ``feature/v1-policies``)
---------------------------------------------------
-- ``base``           -- ``Policy`` protocol and the policy registry.
-- ``static``         -- ``AlwaysLocalLightPolicy``, ``AlwaysLocalStrongPolicy``,
-                        ``AlwaysRemoteStrongPolicy``.
-- ``rule_based``     -- ``RuleBasedPolicy``: privacy, bandwidth, remaining comms budget,
-                        battery headroom vs. required reserve, remaining deadline,
-                        required quality threshold. Explicitly not claimed to be optimal.
-- ``profile_greedy`` -- later; needs the public-profile visibility mode.
+Modules
+-------
+- ``base``       -- the ``Policy`` protocol, the registry, and ``estimated_latency_s``.
+- ``static``     -- ``StaticPolicy``: always the same configuration. The number adaptation
+                    has to beat.
+- ``rule_based`` -- ``RuleBasedPolicy``: privacy, reachability, communication budget,
+                    deadline projection, battery headroom, latency budget, then quality.
+                    Explicitly not claimed to be optimal.
+- ``registry``   -- name-to-policy mapping for the composition root.
 
 Boundaries
 ----------
-A policy must never import a task evaluator, read ground truth, or hardcode fixture
-config IDs as behaviour. Static baselines take their target config ID as a constructor
-argument so they carry no fixture knowledge. Selection must be driven by typed
-configuration metadata (``strategy.placement``, ``strategy.precision``, ...), not by
-parsing ``config_id`` strings.
+A policy must never import a task evaluator, read ground truth, or parse a ``config_id`` to
+deduce behaviour. Selection is driven by typed configuration metadata
+(``strategy.placement``, ``strategy.precision``) and, when disclosed, public profiles.
+
+A policy must also tolerate profiles being hidden. Whether they are disclosed is a property
+of the run; a policy that crashes without them is not a valid submission.
 """
+
+from aerointentbench.policies.base import Policy, estimated_latency_s
+from aerointentbench.policies.registry import policy_registry
+from aerointentbench.policies.rule_based import RuleBasedPolicy, RuleBasedSettings
+from aerointentbench.policies.static import StaticPolicy
+
+__all__ = [
+    "Policy",
+    "RuleBasedPolicy",
+    "RuleBasedSettings",
+    "StaticPolicy",
+    "estimated_latency_s",
+    "policy_registry",
+]

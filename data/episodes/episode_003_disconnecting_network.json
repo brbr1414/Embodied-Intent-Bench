@@ -11,6 +11,7 @@
   "network_trace_id": "NETWORK_DISCONNECTING_001",
   "allowed_config_ids": [
     "CFG_LOCAL_LIGHT",
+    "CFG_LOCAL_STRONG",
     "CFG_REMOTE_STRONG"
   ],
   "initial_config_id": null,
