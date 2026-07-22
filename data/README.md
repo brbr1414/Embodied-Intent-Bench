@@ -18,6 +18,7 @@ inputs to the runner. The software that consumes them lives in `aerointentbench/
 | `platforms/` | UAV platform profiles: capacity, flight power, comms energy | `feature/v1-schemas` |
 | `task_specs/` | Task definitions: evidence type, matching rule, deduplication | `feature/v1-schemas` |
 | `network_traces/` | Deterministic traces: stable, degrading, disconnecting | `feature/v1-schemas` |
+| `paths/` | Predefined flight paths, described by length | `feature/v1-simulator-core` |
 | `profiles/` | Per-platform configuration profiles: latency, energy, transfer sizes | `feature/v1-executors` |
 | `predictions/` | Precomputed frame × config predictions for `ReplayExecutor` | `feature/v1-human-search-task` |
 | `ground_truth/` | Hidden ground truth, read **only** by task evaluators | `feature/v1-human-search-task` |

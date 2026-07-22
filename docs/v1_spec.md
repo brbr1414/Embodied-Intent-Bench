@@ -260,7 +260,40 @@ undefined and an overlap would make it ambiguous; both are load errors rather th
 lookup-time surprises, because the benchmark's determinism depends on every time in the
 trace resolving to exactly one segment.
 
-### 4.9 Shipped fixtures
+### 4.9 Path specification
+
+The predefined path, reduced to the one property the loop consumes:
+
+```json
+{ "schema_version": "1.0", "path_id": "PATH_001", "length_m": 250.0, "description": "..." }
+```
+
+Waypoints, altitude profiles, and turn dynamics are deliberately absent — they would imply
+a flight model V1 does not have, and nothing in the decision loop would read them. Combined
+with the episode's fixed velocity, the length yields `path_progress`, which drives the
+primary termination condition.
+
+### 4.10 Privacy and transmitted payload
+
+`local_only` and `remote_allowed` are decided by `strategy.placement` alone. `features_only`
+needs to know what a remote configuration puts on the wire, which placement cannot express,
+so a remote configuration declares it:
+
+```json
+"strategy": { "placement": "remote", "precision": "fp16",
+              "parameters": { "transmitted_payload": "features" } }
+```
+
+Permitted values are `raw_input` and `features`. A remote configuration that does not declare
+one is treated as transmitting **raw input** — the default fails closed, so forgetting the
+parameter cannot quietly grant permission. Compression is not de-identification: a
+`jpeg_q75` upload is still `raw_input`.
+
+This lives in `parameters` rather than as a typed strategy field because only the privacy
+rule reads it. It graduates to a typed field if the core starts reasoning about it more
+broadly.
+
+### 4.11 Shipped fixtures
 
 | File | Contents |
 |---|---|
@@ -270,6 +303,7 @@ trace resolving to exactly one segment.
 | `data/configs/config_catalog_001.json` | The three-configuration V1 catalog |
 | `data/platforms/synthetic_uav_platform_001.json` | The example UAV platform |
 | `data/network_traces/synthetic_network_{stable,degrading,disconnecting}_001.json` | The three required conditions |
+| `data/paths/path_001.json` | The 250 m survey path (50 s at 5 m/s) |
 | `data/episodes/episode_00{1,2,3}*.json` | One episode per network condition |
 
 Files whose numbers are invented rather than chosen — platform profiles, network traces,
@@ -289,13 +323,22 @@ class Policy(Protocol):
     ) -> str: ...
 ```
 
-An action is invalid if the ID is unknown, not in `allowed_config_ids`, or violates the
-contract's privacy level. On an invalid action:
+An action is invalid if it is not a string at all, if the ID is unknown, if it is not in
+`allowed_config_ids`, or if it violates the contract's privacy level. On an invalid action:
 
 - record an invalid-action violation;
 - if a valid current config exists, keep it;
 - otherwise use the configurable safe fallback (default `CFG_LOCAL_LIGHT`);
 - **never** crash the benchmark because of one invalid action.
+
+The current configuration is re-checked before being kept: an episode's declared
+`initial_config_id` never passed through validation, so it may itself be disallowed or
+privacy-violating. The fallback is validated at construction — discovering mid-episode that
+there is no legal action would leave the runner stuck.
+
+A privacy-violating selection is **blocked, not executed and then penalised**. The simulator
+must not model data leaving the vehicle in violation of its contract even hypothetically;
+the attempt is recorded, and the episode's privacy constraint fails on the record.
 
 ## 6. Timing
 
@@ -305,6 +348,10 @@ Nominal one-frame-per-second stream. When inference exceeds one second:
 - no second inference starts concurrently (V1: one active inference at a time);
 - elapsed time advances by `max(1 s, inference_latency)`;
 - the frame/path position advances accordingly, dropping intermediate frames.
+
+The frame index is the wall clock floored to the frame interval: at t=1.9 s the frame
+captured at 2.0 s does not exist yet. Frames that elapse during a long inference are never
+seen — that dropped work is the cost being modelled, not an error, and the count is logged.
 
 This must stay deterministic and covered by tests.
 
@@ -360,6 +407,23 @@ Terminate when any of these becomes true:
 
 On deadline exceedance: `deadline_success = false`, `mission_success = false`, and **all
 partial evidence and resource logs are preserved**.
+
+Conditions are evaluated in the order **path complete → deadline exceeded → battery
+depleted**, and the first match is reported. The order is reporting precedence only: a step
+that both finished the path and drained the battery did finish the path.
+
+**The termination reason and constraint success are computed independently.** Constraint
+success comes from final values, not from why the episode stopped, and the two can disagree.
+Because the vehicle covers ground on wall-clock time, path completion lands on the path's own
+duration regardless of what the policy selected — so a slow configuration does not fly
+slower, it processes fewer frames. It can still miss the deadline: whichever step straddles
+the path end carries the clock past it, so an episode can stop for `path_complete` at 64 s
+against a 60 s deadline and fail `deadline_success`. `deadline_exceeded` itself fires only
+when the path cannot be flown within the deadline at all.
+
+A single failed remote inference is deliberately not a termination condition. Losing the
+network is a situation the policy is meant to handle, not a reason to stop measuring how it
+handles it.
 
 ## 10. Metrics
 
