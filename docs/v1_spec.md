@@ -741,6 +741,36 @@ the budget. An episode nothing can pass measures nothing, exactly as an episode 
 battery by flight alone would (§10b). `CFG_LOCAL_STRONG` was added to its pool, after which
 `rule_based` (0.872) beats `always_local_strong` (0.842) there.
 
+## 10d. Result files
+
+A result file carries `schema_version` like every other document:
+
+```json
+{
+  "schema_version": "1.0",
+  "benchmark_version": "0.1.0.dev0",
+  "policy": "rule_based",
+  "executor": "profile",
+  "aggregate": { "episode_count": 3, "mission_success_rate": 1.0, "rates": {...}, "means": {...} },
+  "episodes": [ { "mission_success": true, "quality": {...}, "constraints": {...},
+                  "violations": {...}, "resources": {...}, "behaviour": {...},
+                  "record": {...} } ]
+}
+```
+
+Written with sorted keys, so re-running an unchanged benchmark produces a **byte-identical
+file** and a determinism regression shows up as a diff in review.
+
+**The step log and raw evidence are excluded by default.** Beyond size — a 900 s episode
+logs 900 steps and thousands of predicted instances — raw evidence carries
+`ground_truth_track_id` and `mask_iou` on every instance, so a shared result file would
+otherwise publish the answers. `--include-detail` opts in; a detailed file must not be
+published.
+
+The record retains an `adaptation_log` that **no V1 metric consumes**: network-change
+timestamps, battery-threshold crossings, and the full configuration selection history. It is
+kept so adaptation latency can be defined and computed later without rerunning a campaign.
+
 ## 11. Versioning and dependency policy
 
 **Dependencies.** V1 declares **zero runtime dependencies**; `pytest` is the only dev
