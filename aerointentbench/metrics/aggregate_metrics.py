@@ -7,17 +7,58 @@ they say which constraint it kept breaking.
 Every mean is an unweighted mean *over episodes*, so each episode counts once regardless of
 how many steps it ran. A per-step weighting would let a long episode dominate the average
 latency, which would report something about episode length rather than about the policy.
+
+Uncertainty is reported, not implied
+------------------------------------
+Mission Success Rate is a proportion over a finite sample, and over the three shipped
+episodes it can only take four values -- 0, 1/3, 2/3, 1. Read without an interval, that
+turns ordinary sampling noise into a headline: the shipped baselines measured 67 % and
+100 % over three episodes and 92 % and 96 % over 150, a difference that is not
+statistically significant at all.
+
+So every rate carries a 95 % Wilson interval. Wilson rather than the normal approximation
+because the normal interval is badly behaved exactly where this benchmark lives -- near 0
+and 1, and at small n, where it can even extend outside [0, 1].
 """
 
 from __future__ import annotations
 
+import math
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Final
 
 from aerointentbench.metrics.episode_metrics import EpisodeMetrics
 
-__all__ = ["AggregateMetrics", "aggregate_metrics"]
+__all__ = ["AggregateMetrics", "aggregate_metrics", "wilson_interval"]
+
+#: z for a two-sided 95 % interval.
+_Z_95: Final = 1.959963984540054
+
+
+def wilson_interval(successes: int, trials: int, *, z: float = _Z_95) -> tuple[float, float]:
+    """Return the Wilson score interval for a proportion.
+
+    Defined at the boundaries, which matters here: a policy that fails every episode has a
+    real upper bound worth reporting, and the normal approximation would give it a
+    degenerate interval of zero width.
+    """
+    if trials <= 0:
+        return (0.0, 0.0)
+    proportion = successes / trials
+    denominator = 1.0 + z * z / trials
+    centre = (proportion + z * z / (2.0 * trials)) / denominator
+    half_width = (
+        z
+        * math.sqrt(proportion * (1.0 - proportion) / trials + z * z / (4.0 * trials * trials))
+        / denominator
+    )
+    # Pinned at the boundaries rather than left to arithmetic. With no successes the interval
+    # starts at exactly zero, but `centre - half_width` evaluates to a few times 1e-17, and a
+    # rate reported as "0.0 %" whose interval starts above it reads as a bug.
+    low = 0.0 if successes == 0 else max(0.0, centre - half_width)
+    high = 1.0 if successes == trials else min(1.0, centre + half_width)
+    return (low, high)
 
 
 @dataclass(frozen=True, slots=True)
@@ -25,6 +66,11 @@ class AggregateMetrics:
     """A policy's scored result over a suite."""
 
     episode_count: int
+    #: Episodes that satisfied every hard constraint. Kept as a count, not just a rate, so
+    #: the interval can be recomputed and suites can be pooled without losing the sample size.
+    mission_success_count: int
+    #: 95 % Wilson interval on the mission success rate.
+    mission_success_ci: tuple[float, float]
 
     mission_success_rate: float
     quality_success_rate: float
@@ -49,6 +95,8 @@ class AggregateMetrics:
         return {
             "episode_count": self.episode_count,
             "mission_success_rate": self.mission_success_rate,
+            "mission_success_count": self.mission_success_count,
+            "mission_success_ci_95": list(self.mission_success_ci),
             "rates": {
                 "quality_success_rate": self.quality_success_rate,
                 "deadline_success_rate": self.deadline_success_rate,
@@ -83,6 +131,8 @@ def aggregate_metrics(episodes: Sequence[EpisodeMetrics]) -> AggregateMetrics:
     if count == 0:
         return AggregateMetrics(
             episode_count=0,
+            mission_success_count=0,
+            mission_success_ci=(0.0, 0.0),
             **{field: 0.0 for field in _RATE_FIELDS},
             **{field: 0.0 for field in _MEAN_FIELDS},
             total_invalid_action_count=0,
@@ -95,8 +145,11 @@ def aggregate_metrics(episodes: Sequence[EpisodeMetrics]) -> AggregateMetrics:
     def mean(attribute: str) -> float:
         return sum(getattr(episode, attribute) for episode in episodes) / count
 
+    successes = sum(bool(episode.mission_success) for episode in episodes)
     return AggregateMetrics(
         episode_count=count,
+        mission_success_count=successes,
+        mission_success_ci=wilson_interval(successes, count),
         mission_success_rate=rate("mission_success"),
         quality_success_rate=rate("quality_success"),
         deadline_success_rate=rate("deadline_success"),

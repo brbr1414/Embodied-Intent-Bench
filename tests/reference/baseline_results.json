@@ -90,14 +90,14 @@
       },
       {
         "configuration_switch_count": 0,
-        "constraint_violation_count": 0,
+        "constraint_violation_count": 1,
         "episode_id": "EPISODE_003",
         "failed_inference_count": 0,
         "final_battery_fraction": 0.27,
         "invalid_action_count": 0,
         "mean_end_to_end_inference_latency_ms": 450.0,
         "mission_completion_time_s": 900.0,
-        "mission_success": true,
+        "mission_success": false,
         "processed_frames": 900,
         "quality_value": 0.842105,
         "termination_reason": "path_complete",
@@ -105,9 +105,9 @@
       }
     ],
     "mean_quality_value": 0.829153,
-    "mission_success_rate": 0.666667,
+    "mission_success_rate": 0.333333,
     "privacy_constraint_success_rate": 1.0,
-    "quality_success_rate": 0.666667
+    "quality_success_rate": 0.333333
   },
   "always_local_strong@contract_002_local_only": {
     "battery_constraint_success_rate": 1.0,
@@ -200,7 +200,7 @@
       },
       {
         "configuration_switch_count": 0,
-        "constraint_violation_count": 1,
+        "constraint_violation_count": 2,
         "episode_id": "EPISODE_003",
         "failed_inference_count": 160,
         "final_battery_fraction": 0.296686,
@@ -217,7 +217,7 @@
     "mean_quality_value": 0.891026,
     "mission_success_rate": 0.0,
     "privacy_constraint_success_rate": 1.0,
-    "quality_success_rate": 1.0
+    "quality_success_rate": 0.666667
   },
   "rule_based@contract_001": {
     "battery_constraint_success_rate": 1.0,
@@ -240,14 +240,14 @@
       },
       {
         "configuration_switch_count": 2,
-        "constraint_violation_count": 0,
+        "constraint_violation_count": 1,
         "episode_id": "EPISODE_002",
         "failed_inference_count": 0,
         "final_battery_fraction": 0.426959,
         "invalid_action_count": 0,
         "mean_end_to_end_inference_latency_ms": 531.666667,
         "mission_completion_time_s": 900.0,
-        "mission_success": true,
+        "mission_success": false,
         "processed_frames": 900,
         "quality_value": 0.837209,
         "termination_reason": "path_complete",
@@ -270,9 +270,9 @@
       }
     ],
     "mean_quality_value": 0.860266,
-    "mission_success_rate": 1.0,
+    "mission_success_rate": 0.666667,
     "privacy_constraint_success_rate": 1.0,
-    "quality_success_rate": 1.0
+    "quality_success_rate": 0.666667
   },
   "rule_based@contract_002_local_only": {
     "battery_constraint_success_rate": 1.0,

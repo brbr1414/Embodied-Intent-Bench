@@ -710,36 +710,67 @@ optimisation-based policy has something meaningful to beat.
 
 ### Measured Mission Success Rate
 
-Across the three shipped episodes under `contract_001` (`target_f1 >= 0.80`, 400 MB, 20 %
-reserve):
+Over the three shipped episodes under `contract_001` (`target_f1 >= 0.85`, 400 MB, 20 %
+reserve), pooled over 50 seeds per episode (**n = 150**):
 
-| Policy | EP1 | EP2 | EP3 | MSR |
-|---|---|---|---|---:|
-| `always_local_light` | fail | fail | fail | **0 %** |
-| `always_local_strong` | pass | fail | pass | **67 %** |
-| `always_remote_strong` | fail | fail | fail | **0 %** |
-| `rule_based` | pass | pass | pass | **100 %** |
-| `rule_based` (profiles hidden) | fail | fail | fail | **0 %** |
+| Policy | MSR | 95 % CI | mean F1 | quality | comms |
+|---|---:|---|---:|---:|---:|
+| `always_local_light` | **0.7 %** | [0.1, 3.7] | 0.682 | 1 % | 100 % |
+| `always_local_strong` | **64.7 %** | [56.7, 71.9] | 0.862 | 65 % | 100 % |
+| `always_remote_strong` | **0.0 %** | [0.0, 2.5] | 0.878 | 64 % | **0 %** |
+| `rule_based` | **78.0 %** | [70.7, 83.9] | 0.883 | 78 % | 100 % |
+| `rule_based` (profiles hidden) | **0.7 %** | [0.1, 3.7] | 0.682 | 1 % | 100 % |
+
+`rule_based` against the best static baseline: **+13.3 points, z = 2.58, p = 0.010** —
+significant at 95 %.
 
 Each baseline fails for its own reason, which is what makes the suite informative:
-`local_light` never reaches the quality threshold; `remote_strong` scores highest of all
-(F1 0.923–0.950) and busts the communication budget every time; `local_strong` is genuinely
-competitive and loses only where the network is good enough that remote was worth spending
-on. The rule-based policy passes by using remote while bandwidth is high, then rationing.
+`local_light` almost never reaches the quality threshold; `remote_strong` scores well on
+quality and busts the communication budget **every single time**; `local_strong` is
+genuinely competitive and loses where the network was good enough that remote was worth
+spending on.
 
-**Calibration outcome: the 0.80 threshold stands.** It was an open question whether static
-policies passed too easily — on `EPISODE_001` alone, `always_local_strong` (0.865) clears it
-without adapting. Across the suite it does not, so no adjustment was made. Tuning the
-threshold against hand-written probes would have been fitting the benchmark to its own test.
+#### Why these are pooled, and why the earlier numbers were wrong
 
-Two caveats:
+An earlier revision of this document reported 0 % / 67 % / 0 % / 100 % from **three
+episodes**, and claimed adaptation beat every static baseline. That claim was not supported.
 
-- **`rule_based` at 100 % leaves no headroom.** With three episodes a competent heuristic can
-  sweep. A larger episode suite is needed before the metric can rank policies rather than
-  merely separate adaptive from static.
-- **Profile-blind runs collapse to 0 %.** Without a quality tier a policy genuinely cannot
-  tell configurations apart, so it falls back to catalog order. That is the honest cost of
-  hiding profiles, and the measured justification for disclosing an ordinal tier (§4.7).
+Over three episodes a success rate can only be 0, 1/3, 2/3 or 1, and 2/3 carries a 95 %
+interval of **[20.8 %, 93.9 %]** — seventy-three points wide. Meanwhile quality scores vary
+by roughly 0.05 between seeds while the margins deciding pass/fail are around 0.02. Three
+samples cannot resolve that.
+
+Pooled at the *old* 0.80 threshold the same comparison was 96.0 % against 92.0 %:
+**z = 1.46, p = 0.14, not significant**. The threshold was raised to 0.85 precisely because
+at 0.80 the strong local baseline sits near the ceiling and leaves no room to distinguish
+anything:
+
+| threshold | light | local_strong | remote | rule_based | difference | z | significant |
+|---:|---:|---:|---:|---:|---:|---:|---|
+| 0.80 | 8.0 % | 92.0 % | 0.0 % | 96.0 % | +4.0 | 1.46 | no |
+| 0.83 | 0.0 % | 74.0 % | 0.0 % | 90.0 % | +16.0 | 3.69 | yes |
+| **0.85** | **0.0 %** | **64.7 %** | **0.0 %** | **78.0 %** | **+13.3** | **2.58** | **yes** |
+| 0.87 | 0.0 % | 50.0 % | 0.0 % | 66.0 % | +16.0 | 2.85 | yes |
+| 0.90 | 0.0 % | 26.0 % | 0.0 % | 38.0 % | +12.0 | 2.25 | yes |
+
+0.85 keeps the effect significant while leaving `rule_based` at 78 % — headroom for a better
+policy to occupy, which 96 % would not have left.
+
+**Report Mission Success Rate with `--repeats`.** The default of one repeat runs the
+episodes as written and is right for reproducing a specific run; it is not enough to compare
+two policies. `aggregate.mission_success_ci_95` is emitted with every result, and the CLI
+warns when a suite is smaller than thirty runs.
+
+#### The one rate that is not a sampling artifact
+
+`always_remote_strong` measures exactly 0.0 % at n = 150, CI [0.0 %, 2.5 %]. That is
+**structural, not noise**. Communication volume is deterministic — 1.55 MB per processed
+frame — so the 400 MB budget is exceeded on every run, by 449 to 995 MB. Its quality is
+second-best of all the baselines. More episodes will never move it.
+
+That distinction matters when reading any 0 % in this benchmark: it may mean "too few
+samples to see a rare success", or it may mean "this cannot happen". Here the intervals
+separate the two.
 
 ### A fixture invariant this exposed
 
@@ -817,7 +848,7 @@ version.
 |---|---|
 | **`initial_altitude_m` has no consumer** | The episode schema carries it and nothing reads it. In a realistic benchmark altitude would drive ground sample distance and therefore detection difficulty — 40 m and 100 m give very different mask sizes. Today it is decorative, and should either be wired into the synthetic prediction model or removed. |
 | **The quality score is quantised** | Twenty ground-truth targets means recall moves in steps of 0.05. Adequate for separating adaptive from static policies; too coarse to rank policies finely. More targets would smooth it. |
-| **`rule_based` sweeps the suite** | At 100 % Mission Success Rate over three episodes there is no headroom above the reference heuristic. A larger episode suite is needed before the primary metric can rank policies rather than merely separate them. |
+| **Three episodes are not a sample** | A success rate over the shipped suite can only be 0, 1/3, 2/3 or 1, and 2/3 carries a 95 % interval seventy-three points wide. `--repeats` pools seeds to narrow it, but the three episodes share one ground-truth stream, so they remain correlated. Additional streams would do more than more seeds. |
 | **The battery reserve does not discriminate** | Flight power dominates on-board compute by 15–60×, so no policy can move the final battery fraction much. It is a live observation and a guard, not a scoring axis (§11). |
 | **Adaptation latency is unimplemented** | "Appropriately adapted" is not formally defined, so no metric is computed. The data to compute one later is logged (§13). |
 | **Switching is free** | Zero latency and zero energy, all configurations assumed preloaded. Real model swapping costs both. |

@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Iterable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Final
 
@@ -63,6 +63,13 @@ class EpisodeResult:
     metrics: EpisodeMetrics
 
 
+#: Seeds for repeat r of an episode are ``episode.seed + r * SEED_STRIDE``. The stride keeps
+#: two episodes from colliding onto the same seed -- and therefore onto identical synthetic
+#: predictions -- as long as their declared seeds differ by less than it. Repeat 0 leaves the
+#: seed untouched, so a single-repeat suite is exactly the episode as written.
+SEED_STRIDE: Final = 10_000
+
+
 @dataclass(frozen=True, slots=True)
 class SuiteResult:
     """A policy's results over a set of episodes."""
@@ -71,6 +78,8 @@ class SuiteResult:
     executor_name: str
     episodes: tuple[EpisodeResult, ...]
     aggregate: AggregateMetrics
+    #: How many seeds each episode was run under. See :func:`run_suite`.
+    repeats: int = 1
 
     def to_dict(self, *, include_detail: bool = False) -> dict[str, Any]:
         """Serialise to the V1 result-file shape.
@@ -84,6 +93,7 @@ class SuiteResult:
             "benchmark_version": __version__,
             "policy": self.policy_name,
             "executor": self.executor_name,
+            "repeats": self.repeats,
             "aggregate": self.aggregate.to_dict(),
             "episodes": [
                 {
@@ -272,24 +282,54 @@ def run_suite(
     policy_name: str = "rule_based",
     policy: Policy | None = None,
     disclose_profiles: bool = True,
+    repeats: int = 1,
 ) -> SuiteResult:
-    """Run every episode against one contract and aggregate the results."""
+    """Run every episode against one contract and aggregate the results.
+
+    Args:
+        repeats: How many seeds to run each episode under. The default of 1 runs the
+            episodes exactly as written.
+
+    Why repeats exist
+    -----------------
+    Mission Success Rate over three episodes can only be 0, 1/3, 2/3 or 1, and the shipped
+    quality scores vary by roughly 0.05 between seeds while the margins that decide
+    pass/fail are around 0.02. Three episodes therefore cannot resolve the difference
+    between two policies: the baselines measure 67 % and 100 % over three episodes and 92 %
+    and 96 % over 150, and the second pair is not a significant difference at all.
+
+    Repeats resample the *scene* -- the seed drives synthetic prediction generation -- while
+    holding the path, platform, network trace, and targets fixed. That is genuine additional
+    sampling, but it is not the same as adding independent episodes: the shipped episodes
+    already share one ground-truth stream, so this narrows the interval without removing
+    that correlation.
+
+    A policy instance is reused across repeats when one is passed directly, so a stateful
+    policy sees the whole grid. Pass a fresh instance per suite if that matters.
+    """
+    if repeats < 1:
+        raise ValueError(f"repeats must be at least 1, got {repeats}")
+
     results = tuple(
         run_episode(
             data=data,
-            episode=episode,
+            episode=episode
+            if repeat == 0
+            else replace(episode, seed=episode.seed + repeat * SEED_STRIDE),
             contract=contract,
             policy_name=policy_name,
             policy=policy,
             disclose_profiles=disclose_profiles,
         )
         for episode in episodes
+        for repeat in range(repeats)
     )
     return SuiteResult(
         policy_name=policy_name,
         executor_name="profile",
         episodes=results,
         aggregate=aggregate_metrics([result.metrics for result in results]),
+        repeats=repeats,
     )
 
 

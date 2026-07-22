@@ -5,9 +5,9 @@
   "evidence_type": "instance_mask_set",
   "quality_metric": "target_f1",
   "quality_operator": ">=",
-  "quality_threshold": 0.80,
+  "quality_threshold": 0.85,
   "deadline_s": 960.0,
   "communication_budget_mb": 400.0,
-  "min_final_battery_frac": 0.20,
+  "min_final_battery_frac": 0.2,
   "privacy_level": "remote_allowed"
 }

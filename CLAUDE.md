@@ -36,6 +36,13 @@ moves those numbers, that is the benchmark moving. Regenerate with
 `python -m tests.test_reference_suite --update` and review the diff deliberately; do not
 regenerate to make a test pass.
 
+**Never quote a success rate from three episodes.** Over the shipped suite a rate can only
+be 0, 1/3, 2/3 or 1, and 2/3 carries a 95 % interval of [20.8 %, 93.9 %]. An earlier
+revision of the spec claimed adaptation beat every static baseline on that basis; pooled
+over seeds the difference was not significant, and the quality threshold had to be raised
+to make it so. Use `--repeats` and report `mission_success_ci_95`. See `docs/v1_spec.md`
+§12.
+
 ## Documents
 
 | Document | Read it for |

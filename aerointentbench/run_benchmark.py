@@ -74,6 +74,17 @@ def build_parser() -> argparse.ArgumentParser:
         choices=policy_registry.names(),
         help="Policy to evaluate (default: %(default)s).",
     )
+    parser.add_argument(
+        "--repeats",
+        type=int,
+        default=1,
+        metavar="N",
+        help=(
+            "Run each episode under N seeds and pool the results (default: %(default)s). "
+            "Three episodes can only produce a success rate of 0, 1/3, 2/3 or 1; raise this "
+            "to get an interval narrow enough to compare policies."
+        ),
+    )
     parser.add_argument("--output", type=Path, help="Where to write the result JSON.")
     parser.add_argument(
         "--include-detail",
@@ -114,6 +125,7 @@ def main(argv: list[str] | None = None) -> int:
             contract=contract,
             policy_name=args.policy,
             disclose_profiles=not args.hide_profiles,
+            repeats=args.repeats,
         )
     except SchemaValidationError as error:
         print(f"aerointentbench: {error}", file=sys.stderr)
@@ -139,24 +151,45 @@ def main(argv: list[str] | None = None) -> int:
 def _print_summary(result: SuiteResult, *, output: Path | None) -> None:
     aggregate = result.aggregate
     print(f"policy: {result.policy_name}   executor: {result.executor_name}")
-    print(
-        f"{'episode':<16}{'success':>9}{'quality':>9}{'MB':>9}{'batt':>8}{'time s':>9}{'switch':>8}"
-    )
-    for episode in result.episodes:
-        metrics = episode.metrics
+    if result.repeats == 1:
         print(
-            f"{metrics.episode_id:<16}"
-            f"{'PASS' if metrics.mission_success else 'fail':>9}"
-            f"{metrics.quality_value:>9.3f}"
-            f"{metrics.total_communication_mb:>9.0f}"
-            f"{metrics.final_battery_fraction:>8.3f}"
-            f"{metrics.mission_completion_time_s:>9.0f}"
-            f"{metrics.configuration_switch_count:>8}"
+            f"{'episode':<16}{'success':>9}{'quality':>9}{'MB':>9}{'batt':>8}{'time s':>9}"
+            f"{'switch':>8}"
         )
+        for episode in result.episodes:
+            metrics = episode.metrics
+            print(
+                f"{metrics.episode_id:<16}"
+                f"{'PASS' if metrics.mission_success else 'fail':>9}"
+                f"{metrics.quality_value:>9.3f}"
+                f"{metrics.total_communication_mb:>9.0f}"
+                f"{metrics.final_battery_fraction:>8.3f}"
+                f"{metrics.mission_completion_time_s:>9.0f}"
+                f"{metrics.configuration_switch_count:>8}"
+            )
+    else:
+        # One line per episode would be `repeats` lines each; summarise per episode instead.
+        print(f"{'episode':<16}{'runs':>6}{'passed':>8}{'rate':>8}{'mean quality':>14}")
+        for episode_id in dict.fromkeys(e.metrics.episode_id for e in result.episodes):
+            runs = [e.metrics for e in result.episodes if e.metrics.episode_id == episode_id]
+            passed = sum(m.mission_success for m in runs)
+            mean_quality = sum(m.quality_value for m in runs) / len(runs)
+            print(
+                f"{episode_id:<16}{len(runs):>6}{passed:>8}"
+                f"{passed / len(runs):>8.0%}{mean_quality:>14.3f}"
+            )
+
+    low, high = aggregate.mission_success_ci
     print(
-        f"\nMission Success Rate: {aggregate.mission_success_rate:.0%} "
-        f"over {aggregate.episode_count} episode(s)"
+        f"\nMission Success Rate: {aggregate.mission_success_rate:.1%} "
+        f"({aggregate.mission_success_count}/{aggregate.episode_count})   "
+        f"95% CI [{low:.1%}, {high:.1%}]"
     )
+    if aggregate.episode_count < 30:
+        print(
+            "  note: that interval is wide. Use --repeats to pool more seeds before "
+            "comparing policies."
+        )
     print(
         f"  quality {aggregate.quality_success_rate:.0%}   "
         f"deadline {aggregate.deadline_success_rate:.0%}   "

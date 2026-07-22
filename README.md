@@ -103,13 +103,27 @@ ground-truth-derived fields — do not publish a detailed result file).
 
 ### Measured baselines
 
-| Policy | Mission Success Rate | Why it fails |
-|---|---:|---|
-| `always_local_light` | 0 % | never reaches the quality threshold |
-| `always_local_strong` | 67 % | competitive; loses where remote was worth spending on |
-| `always_remote_strong` | 0 % | highest quality of all, always over the communication budget |
-| `rule_based` | 100 % | uses remote while bandwidth is high, then rations |
-| `rule_based --hide-profiles` | 0 % | cannot tell configurations apart without a quality tier |
+Pooled over 50 seeds per episode (n = 150), because three episodes can only produce a
+success rate of 0, 1/3, 2/3 or 1 — an interval too wide to compare policies with:
+
+| Policy | Mission Success Rate | 95 % CI | Why it fails |
+|---|---:|---|---|
+| `always_local_light` | 0.7 % | [0.1, 3.7] | almost never reaches the quality threshold |
+| `always_local_strong` | 64.7 % | [56.7, 71.9] | competitive; loses where remote was worth spending on |
+| `always_remote_strong` | **0.0 %** | [0.0, 2.5] | second-best quality, over the communication budget **every run** |
+| `rule_based` | **78.0 %** | [70.7, 83.9] | uses remote while bandwidth is high, then rations |
+| `rule_based --hide-profiles` | 0.7 % | [0.1, 3.7] | cannot tell configurations apart without a quality tier |
+
+`rule_based` beats the best static baseline by **+13.3 points (z = 2.58, p = 0.010)**.
+`always_remote_strong`'s zero is structural rather than a small-sample artifact: its
+communication volume is deterministic and exceeds the budget on every run.
+
+Reproduce with:
+
+```bash
+python -m aerointentbench.run_benchmark --suite \
+  --contract data/contracts/contract_001.json --policy rule_based --repeats 50
+```
 
 ## Repository layout
 
