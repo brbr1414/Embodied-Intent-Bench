@@ -292,10 +292,12 @@ def test_mean_confidence_of_nothing_is_zero_not_an_error() -> None:
 
 def test_the_tracker_rejects_a_payload_from_another_task() -> None:
     tracker = HumanSearchEvidenceTracker()
+    # A dict from another task ({"boxes": []}) has no 'instances' list, and coercion must
+    # refuse it rather than silently reading zero instances.
     result = ExecutionResult(
         success=True, latency_s=0.1, onboard_energy_j=1.0, prediction={"boxes": []}
     )
-    with pytest.raises(TypeError, match="expects a FramePrediction"):
+    with pytest.raises(TypeError, match="cannot read a human-search prediction"):
         tracker.update(result)
 
 

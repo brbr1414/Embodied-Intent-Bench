@@ -19,7 +19,8 @@ from typing import Any, Final
 
 from aerointentbench import SCHEMA_VERSION, __version__
 from aerointentbench.executor.base import Executor
-from aerointentbench.executor.profile_executor import ProfileExecutor
+from aerointentbench.executor.registry import ExecutorContext, build_executor
+from aerointentbench.executor.replay_executor import ReplayRecordSet, load_replay_record_set
 from aerointentbench.metrics.aggregate_metrics import AggregateMetrics, aggregate_metrics
 from aerointentbench.metrics.episode_metrics import EpisodeMetrics, compute_episode_metrics
 from aerointentbench.policies.base import Policy
@@ -50,7 +51,18 @@ from aerointentbench.simulator.records import EpisodeRecord
 from aerointentbench.simulator.state_manager import StateManager
 from aerointentbench.tasks.registry import resolve_task
 
-__all__ = ["BenchmarkData", "EpisodeResult", "SuiteResult", "run_episode", "run_suite"]
+__all__ = [
+    "DEFAULT_EXECUTOR",
+    "BenchmarkData",
+    "EpisodeResult",
+    "SuiteResult",
+    "run_episode",
+    "run_suite",
+]
+
+#: The executor used when none is named. Profile-driven simulation: no GPU, no weights,
+#: exactly reproducible, and every number it reports synthetic.
+DEFAULT_EXECUTOR: Final = "profile"
 
 _LOGGER: Final = logging.getLogger(__name__)
 
@@ -75,11 +87,20 @@ class SuiteResult:
     """A policy's results over a set of episodes."""
 
     policy_name: str
-    executor_name: str
+    #: Provenance of the backend that produced these episodes, read from the episode
+    #: records rather than named independently. If a suite somehow mixed backends this is
+    #: the sorted set of what actually ran, so it can never quietly claim one when another
+    #: was used.
+    executor_id: str
     episodes: tuple[EpisodeResult, ...]
     aggregate: AggregateMetrics
     #: How many seeds each episode was run under. See :func:`run_suite`.
     repeats: int = 1
+
+    @staticmethod
+    def _executor_id_from(episodes: tuple[EpisodeResult, ...]) -> str:
+        ids = sorted({result.record.executor_id for result in episodes})
+        return "+".join(ids) if ids else ""
 
     def to_dict(self, *, include_detail: bool = False) -> dict[str, Any]:
         """Serialise to the V1 result-file shape.
@@ -92,7 +113,7 @@ class SuiteResult:
             "schema_version": SCHEMA_VERSION,
             "benchmark_version": __version__,
             "policy": self.policy_name,
-            "executor": self.executor_name,
+            "executor_id": self.executor_id,
             "repeats": self.repeats,
             "aggregate": self.aggregate.to_dict(),
             "episodes": [
@@ -114,6 +135,7 @@ class BenchmarkData:
         "_paths",
         "_platforms",
         "_profiles",
+        "_replay_sets",
         "_root",
         "_task_specs",
         "_traces",
@@ -141,6 +163,16 @@ class BenchmarkData:
             spec.task_id: spec for spec in _load_all(root / "task_specs", load_task_spec)
         }
         self._ground_truth_dir = root / "ground_truth"
+        self._replay_sets: dict[str, ReplayRecordSet] = {}
+        for record_set in _load_all(root / "predictions", load_replay_record_set):
+            if record_set.episode_id in self._replay_sets:
+                # Two sets claiming one episode would make replay provenance depend on
+                # filesystem order -- exactly the ambiguity this branch exists to remove.
+                raise SchemaValidationError(
+                    f"two replay record sets declare episode_id {record_set.episode_id!r}; "
+                    "each episode may have at most one replay set under predictions/"
+                )
+            self._replay_sets[record_set.episode_id] = record_set
 
     @property
     def root(self) -> Path:
@@ -169,6 +201,15 @@ class BenchmarkData:
     def task_spec(self, task_id: str) -> TaskSpec:
         return _lookup(self._task_specs, task_id, "task specification")
 
+    def replay_record_set(self, episode_id: str) -> ReplayRecordSet | None:
+        """Return the replay records recorded from ``episode_id``, if any were.
+
+        ``None`` rather than an error: an episode without a record set is only a problem
+        when the replay executor is actually selected, and that is where the error belongs
+        -- with the instruction for how to record one.
+        """
+        return self._replay_sets.get(episode_id)
+
     def episodes(self) -> tuple[Episode, ...]:
         return tuple(_load_all(self._root / "episodes", load_episode))
 
@@ -183,8 +224,9 @@ def run_episode(
     contract: Contract,
     policy_name: str = "rule_based",
     policy: Policy | None = None,
+    executor_name: str = DEFAULT_EXECUTOR,
     executor: Executor | None = None,
-    executor_name: str = "profile",
+    replay_strict: bool = False,
     battery_model: BatteryModel | None = None,
     network_model: NetworkModel | None = None,
     disclose_profiles: bool = True,
@@ -197,7 +239,13 @@ def run_episode(
             explicit benchmark-mode setting, not something a policy can arrange for itself.
         policy: A constructed policy, overriding ``policy_name``. Lets an external policy be
             evaluated without registering it.
-        executor: A constructed executor, overriding the default profile-driven one.
+        executor_name: Which registered backend to build. See ``executor_registry``.
+        executor: An already-constructed backend, overriding ``executor_name``. Its
+            provenance is read from the object's ``executor_id``, never from
+            ``executor_name`` -- an unregistered backend is recorded as
+            ``"unregistered:<ClassName>"`` rather than mislabelled as a registered one.
+        replay_strict: Whether a missing replay record raises instead of being recorded as
+            a failed inference.
         battery_model: Overrides ``SimpleBatteryModel``. The seam a recorded-discharge or
             electrochemical model plugs into.
         network_model: Overrides the trace-based model. The seam an external simulator
@@ -232,8 +280,15 @@ def run_episode(
     resolved_executor = (
         executor
         if executor is not None
-        else ProfileExecutor(
-            profiles, predictions=task.create_prediction_source(ground_truth, profiles)
+        else build_executor(
+            executor_name,
+            ExecutorContext(
+                episode_id=episode.episode_id,
+                profiles=profiles,
+                prediction_source=task.create_prediction_source(ground_truth, profiles),
+                replay_record_set=data.replay_record_set(episode.episode_id),
+                replay_strict=replay_strict,
+            ),
         )
     )
 
@@ -264,7 +319,6 @@ def run_episode(
             fallback_config_id=fallback_config_id,
         ),
         policy_name=policy_name,
-        executor_name=executor_name,
     )
 
     record = runner.run()
@@ -281,7 +335,9 @@ def run_suite(
     contract: Contract,
     policy_name: str = "rule_based",
     policy: Policy | None = None,
+    executor_name: str = DEFAULT_EXECUTOR,
     disclose_profiles: bool = True,
+    replay_strict: bool = False,
     repeats: int = 1,
 ) -> SuiteResult:
     """Run every episode against one contract and aggregate the results.
@@ -319,14 +375,16 @@ def run_suite(
             contract=contract,
             policy_name=policy_name,
             policy=policy,
+            executor_name=executor_name,
             disclose_profiles=disclose_profiles,
+            replay_strict=replay_strict,
         )
         for episode in episodes
         for repeat in range(repeats)
     )
     return SuiteResult(
         policy_name=policy_name,
-        executor_name="profile",
+        executor_id=SuiteResult._executor_id_from(results),
         episodes=results,
         aggregate=aggregate_metrics([result.metrics for result in results]),
         repeats=repeats,

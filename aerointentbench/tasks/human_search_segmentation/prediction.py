@@ -74,6 +74,25 @@ class PredictedInstance:
             "mask_iou": self.mask_iou,
         }
 
+    @classmethod
+    def from_dict(cls, payload: Mapping[str, Any]) -> PredictedInstance:
+        """Rebuild an instance from a serialised payload, e.g. a replay record.
+
+        The hidden fields default when absent, which is deliberate: a replay set recorded
+        for release carries only the public fields, so a replayed instance has no
+        ``ground_truth_track_id`` and a zero ``mask_iou`` -- and therefore scores as a false
+        positive. Replay is exact for the plumbing (latency, energy, communication,
+        provenance); reproducing a quality score needs a set that kept the hidden fields.
+        """
+        return cls(
+            prediction_id=str(payload["prediction_id"]),
+            frame_id=int(payload["frame_id"]),
+            predicted_target_id=str(payload["predicted_target_id"]),
+            confidence=float(payload["confidence"]),
+            ground_truth_track_id=payload.get("ground_truth_track_id"),
+            mask_iou=float(payload.get("mask_iou", 0.0)),
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class FramePrediction:
@@ -84,6 +103,30 @@ class FramePrediction:
 
     def __len__(self) -> int:
         return len(self.instances)
+
+    @classmethod
+    def coerce(cls, payload: object) -> FramePrediction:
+        """Return ``payload`` as a ``FramePrediction``, rebuilding it from a dict if needed.
+
+        A live profile run hands the tracker a ``FramePrediction`` object directly. A replay
+        run hands it the same payload after a JSON round-trip, i.e. a plain dict. The task
+        owns its payload shape, so knowing how to read both forms belongs here rather than
+        in the executor or the runner.
+        """
+        if isinstance(payload, FramePrediction):
+            return payload
+        if isinstance(payload, Mapping) and "instances" in payload:
+            return cls(
+                frame_id=int(payload.get("frame_id", -1)),
+                instances=tuple(PredictedInstance.from_dict(item) for item in payload["instances"]),
+            )
+        # A mapping without an 'instances' list, or a non-mapping, is a payload from some
+        # other task. Refuse it rather than silently reading zero instances, which would let
+        # a mismatched executor score as "saw nothing" instead of failing.
+        raise TypeError(
+            f"cannot read a human-search prediction from {type(payload).__name__}; "
+            "expected a FramePrediction or a mapping with an 'instances' list"
+        )
 
 
 @dataclass(frozen=True, slots=True)

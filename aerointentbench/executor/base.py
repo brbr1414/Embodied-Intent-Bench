@@ -22,19 +22,26 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
 from types import MappingProxyType
-from typing import Any, Protocol
+from typing import Any, Final, Protocol
 
 from aerointentbench.schemas.configuration import Configuration
 from aerointentbench.schemas.network_trace import NetworkObservation
 
 __all__ = [
+    "UNREGISTERED_EXECUTOR_PREFIX",
     "ExecutionRequest",
     "ExecutionResult",
     "Executor",
     "FailureReason",
     "Prediction",
     "PredictionSource",
+    "executor_id_of",
 ]
+
+#: Prefix for the provenance of an executor that carries no ``executor_id``. Such a backend
+#: is legitimate -- a test double or an externally supplied one -- but it must never be
+#: mistaken for a registered backend, so its identity says plainly that it is not one.
+UNREGISTERED_EXECUTOR_PREFIX: Final = "unregistered"
 
 #: A task-specific prediction payload. Opaque to the executor and the runner; only the
 #: task's evidence tracker interprets it.
@@ -127,9 +134,29 @@ class ExecutionResult:
 class Executor(Protocol):
     """Executes or replays one configuration on one frame."""
 
+    #: Stable provenance, equal to the name this backend is registered under. It belongs to
+    #: the executor rather than to whoever constructed it: a name held separately can drift
+    #: out of agreement with the object, and a result file that misreports which backend
+    #: produced it is worse than one that reports nothing.
+    executor_id: str
+
     def execute(self, request: ExecutionRequest) -> ExecutionResult:
         """Return the result of running ``request``. Must not raise on execution failure."""
         ...
+
+
+def executor_id_of(executor: object) -> str:
+    """Return the provenance of ``executor``, derived from the object itself.
+
+    An executor that declares no ``executor_id`` is reported as
+    ``"unregistered:<ClassName>"`` rather than guessed at. That is accurate for a test
+    double or an externally supplied backend, and it cannot be confused with a registered
+    name -- which is the failure this function exists to prevent.
+    """
+    identifier = getattr(executor, "executor_id", None)
+    if isinstance(identifier, str) and identifier.strip():
+        return identifier
+    return f"{UNREGISTERED_EXECUTOR_PREFIX}:{type(executor).__name__}"
 
 
 class PredictionSource(Protocol):

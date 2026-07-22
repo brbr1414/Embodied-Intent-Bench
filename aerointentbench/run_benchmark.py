@@ -24,7 +24,7 @@ import logging
 import sys
 from pathlib import Path
 
-from aerointentbench.benchmark import BenchmarkData, SuiteResult, run_suite
+from aerointentbench.benchmark import DEFAULT_EXECUTOR, BenchmarkData, SuiteResult, run_suite
 from aerointentbench.executor.registry import executor_registry
 from aerointentbench.policies.registry import policy_registry
 from aerointentbench.schemas.contract import load_contract
@@ -73,6 +73,25 @@ def build_parser() -> argparse.ArgumentParser:
         default="rule_based",
         choices=policy_registry.names(),
         help="Policy to evaluate (default: %(default)s).",
+    )
+    parser.add_argument(
+        "--executor",
+        default=DEFAULT_EXECUTOR,
+        choices=executor_registry.names(),
+        help=(
+            "Execution backend (default: %(default)s). "
+            "'profile' synthesises costs from a per-platform profile (all values synthetic); "
+            "'replay' serves precomputed frame x config records, the bridge to real "
+            "predictions; 'real_segmentation' is a V1 stub and fails immediately."
+        ),
+    )
+    parser.add_argument(
+        "--replay-strict",
+        action="store_true",
+        help=(
+            "With --executor replay, treat a missing record as an error rather than a "
+            "recorded failed inference."
+        ),
     )
     parser.add_argument(
         "--repeats",
@@ -124,9 +143,16 @@ def main(argv: list[str] | None = None) -> int:
             episodes=episodes,
             contract=contract,
             policy_name=args.policy,
+            executor_name=args.executor,
             disclose_profiles=not args.hide_profiles,
+            replay_strict=args.replay_strict,
             repeats=args.repeats,
         )
+    except NotImplementedError as error:
+        # A selected-but-unbuilt backend (real_segmentation) fails at construction, before
+        # any episode runs. Report it as a clean usage error, not a traceback.
+        print(f"aerointentbench: {error}", file=sys.stderr)
+        return 2
     except SchemaValidationError as error:
         print(f"aerointentbench: {error}", file=sys.stderr)
         return 2
@@ -150,7 +176,7 @@ def main(argv: list[str] | None = None) -> int:
 
 def _print_summary(result: SuiteResult, *, output: Path | None) -> None:
     aggregate = result.aggregate
-    print(f"policy: {result.policy_name}   executor: {result.executor_name}")
+    print(f"policy: {result.policy_name}   executor: {result.executor_id}")
     if result.repeats == 1:
         print(
             f"{'episode':<16}{'success':>9}{'quality':>9}{'MB':>9}{'batt':>8}{'time s':>9}"

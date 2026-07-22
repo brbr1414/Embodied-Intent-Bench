@@ -74,13 +74,11 @@ class HumanSearchEvidenceTracker:
         if not result.success or result.prediction is None:
             return
 
-        prediction = result.prediction
-        if not isinstance(prediction, FramePrediction):
-            raise TypeError(
-                f"{type(self).__name__} expects a FramePrediction payload, "
-                f"got {type(prediction).__name__}. The executor's prediction source must "
-                f"match the task."
-            )
+        # Coerce rather than type-check: a live profile run passes a FramePrediction, a
+        # replay run passes the same payload after a JSON round-trip (a dict). Both are this
+        # task's payload, so reading both forms is this task's responsibility. A payload from
+        # a different task raises inside coerce().
+        prediction = FramePrediction.coerce(result.prediction)
 
         self._processed_frames += 1
         for instance in prediction.instances:

@@ -67,7 +67,7 @@ class EpisodeRecord:
     episode_id: str
     contract_id: str
     policy_name: str
-    executor_name: str
+    executor_id: str
     steps: tuple[StepRecord, ...]
     termination_reason: TerminationReason
     final_time_s: float
@@ -123,7 +123,7 @@ class EpisodeRecord:
             "episode_id": self.episode_id,
             "contract_id": self.contract_id,
             "policy": self.policy_name,
-            "executor": self.executor_name,
+            "executor_id": self.executor_id,
             "seed": self.seed,
             "step_count": self.step_count,
             "termination_reason": self.termination_reason.value,
