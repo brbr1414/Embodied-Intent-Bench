@@ -686,6 +686,61 @@ by flight alone (flight energy is not policy-controllable, so it must never deci
 outcome), and the path must be flyable inside every deadline (path completion has to be a
 reachable outcome).
 
+## 10c. Baseline policies and measured difficulty
+
+V1 ships four baselines. None is claimed to be optimal; they exist so that a learned or
+optimisation-based policy has something meaningful to beat.
+
+- **`always_local_light` / `always_local_strong` / `always_remote_strong`** — `StaticPolicy`
+  with a fixed configuration ID. Naming a configuration is not the same as parsing an ID to
+  deduce behaviour; "always use X" *is* the policy. If X is outside an episode's allowed
+  pool the policy still returns it, and the recorded invalid-action count is the honest
+  report that the baseline does not apply there.
+- **`rule_based`** — filters by privacy, then reachability, then communication budget; takes
+  the fastest option under deadline or battery pressure; drops anything over a latency
+  ceiling; and finally takes the best quality tier that survives.
+
+### Measured Mission Success Rate
+
+Across the three shipped episodes under `contract_001` (`target_f1 >= 0.80`, 400 MB, 20 %
+reserve):
+
+| Policy | EP1 | EP2 | EP3 | MSR |
+|---|---|---|---|---:|
+| `always_local_light` | fail | fail | fail | **0 %** |
+| `always_local_strong` | pass | fail | pass | **67 %** |
+| `always_remote_strong` | fail | fail | fail | **0 %** |
+| `rule_based` | pass | pass | pass | **100 %** |
+| `rule_based` (profiles hidden) | fail | fail | fail | **0 %** |
+
+Each baseline fails for its own reason, which is what makes the suite informative:
+`local_light` never reaches the quality threshold; `remote_strong` scores highest of all
+(F1 0.923–0.950) and busts the communication budget every time; `local_strong` is genuinely
+competitive and loses only where the network is good enough that remote was worth spending
+on. The rule-based policy passes by using remote while bandwidth is high, then rationing.
+
+**Calibration outcome: the 0.80 threshold stands.** It was an open question whether static
+policies passed too easily — on `EPISODE_001` alone, `always_local_strong` (0.865) clears it
+without adapting. Across the suite it does not, so no adjustment was made. Tuning the
+threshold against hand-written probes would have been fitting the benchmark to its own test.
+
+Two caveats:
+
+- **`rule_based` at 100 % leaves no headroom.** With three episodes a competent heuristic can
+  sweep. A larger episode suite is needed before the metric can rank policies rather than
+  merely separate adaptive from static.
+- **Profile-blind runs collapse to 0 %.** Without a quality tier a policy genuinely cannot
+  tell configurations apart, so it falls back to catalog order. That is the honest cost of
+  hiding profiles, and the measured justification for disclosing an ordinal tier (§4.6b).
+
+### A fixture invariant this exposed
+
+`EPISODE_003` originally allowed only `CFG_LOCAL_LIGHT` and `CFG_REMOTE_STRONG`, and **no
+policy could pass it** — light never reached the threshold and remote could not stay inside
+the budget. An episode nothing can pass measures nothing, exactly as an episode doomed on
+battery by flight alone would (§10b). `CFG_LOCAL_STRONG` was added to its pool, after which
+`rule_based` (0.872) beats `always_local_strong` (0.842) there.
+
 ## 11. Versioning and dependency policy
 
 **Dependencies.** V1 declares **zero runtime dependencies**; `pytest` is the only dev
