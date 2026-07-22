@@ -1,0 +1,123 @@
+# CLAUDE.md — AeroIntentBench
+
+Guidance for Claude Code sessions in this repository. Read this before changing anything.
+
+## What this project is
+
+**AeroIntentBench** is a benchmark for evaluating **intent-conditioned, resource-aware
+inference configuration selection policies** in UAV missions.
+
+A policy observes a structured mission contract and a policy-visible runtime state, then
+selects one inference configuration from a fixed pool. The runner executes or simulates
+that configuration, updates time, battery, network usage, and mission evidence, and
+computes mission-level metrics.
+
+The core question: *Can a policy select appropriate perception inference configurations
+under changing battery and network conditions while satisfying a mission contract?*
+
+The benchmark does **not** evaluate path planning, navigation, flight control, or
+open-ended language understanding.
+
+(The repository is named `Embodied-Intent-Bench`; the Python package and the benchmark
+are `aerointentbench` / AeroIntentBench.)
+
+## Current status
+
+V1, in progress. See `docs/branching.md` for the branch sequence and which branch owns
+what. Branch 1 (`feature/v1-spec-and-scaffold`) established docs, packaging, and the
+package/test skeleton; domain logic lands in later branches.
+
+## Documents
+
+| Document | Read it for |
+|---|---|
+| `docs/v1_spec.md` | Normative V1 scope, schemas, semantics, metrics, assumptions |
+| `docs/architecture.md` | Module boundaries, interfaces, dependency rules, anti-patterns |
+| `docs/branching.md` | Branch workflow and the V1 branch sequence |
+| `data/README.md` | Fixture layout and the synthetic-data rule |
+
+## V1 scope
+
+In scope: UAV on a predefined path; fixed nominal altitude and velocity; one perception
+task family (segmentation); one mission type (human search); one-second decision
+interval; policy action = one predefined configuration ID; dynamic battery, bandwidth,
+RTT, packet loss, remaining deadline, accumulated communication, path progress, and
+accumulated evidence; profile-driven deterministic simulation; local **and** remote
+configurations representable.
+
+## Do not add these yet
+
+Adding any of the following without an explicit request is a defect, not initiative:
+
+- Real segmentation model execution (interface stub only), or any heavy ML dependency.
+- GPU requirements. **The benchmark must run on CPU with zero runtime dependencies.**
+- Gazebo, PX4, ROS 2, real UAV control, physical flight dynamics, navigation policy.
+- Split inference, training pipelines, RL implementations.
+- Speculative frameworks: dynamic plugin discovery, entry-point systems, deep inheritance
+  trees, abstractions with no current implementation.
+
+Future extensions (other tasks, missions, strategies, platforms, policies, simulators) may
+**influence interface design** — see `docs/architecture.md` §9 — but must not be built.
+
+## Architectural rules
+
+**The benchmark core must contain no logic specific to human-search segmentation.**
+
+- `EpisodeRunner` depends on protocols (`Policy`, `Executor`, `TaskEvaluator`,
+  `EvidenceTracker`, `BatteryModel`, `NetworkModel`, `TerminationCondition`), never on
+  concrete task code. It must not branch on `task_id` or contain mask/IoU logic.
+- `task_id` resolves a registered `TaskDefinition`; executors and policies resolve through
+  registries. Registries are added by the branch that has a second implementation to
+  register, not before.
+- **`config_id` is an identifier only.** Never parse it to infer behaviour. Behaviour comes
+  from typed strategy metadata.
+- Metrics consume a standardised `TaskEvaluationResult`; mission-success logic must never
+  name a task-specific metric such as `target_f1`.
+- Composition happens in `run_benchmark.py`; components are injected via constructors.
+- Every specification and result file carries `schema_version`; V1 supports `"1.0"` only
+  and fails loudly on anything else. Validation is strict — reject unknown fields.
+
+**Policy-visible / simulator-internal / hidden ground truth are three separate tiers.**
+A policy receives a frozen `RuntimeState` — never the `Episode`, the runner, the future
+network trace, or anything ground-truth-derived. A ground-truth quantity reaching a policy
+invalidates the benchmark.
+
+## Coding conventions
+
+- Python 3.11+, fully typed, `from __future__ import annotations`.
+- **Zero runtime dependencies.** stdlib `dataclasses` (frozen where practical), not
+  Pydantic. `pytest` is the only dev dependency.
+- `pathlib` over `os.path`; stdlib `logging` (no bare `print` outside the CLI).
+- JSON-serialisable typed records; deterministic seeds; pure functions where practical.
+- `ruff` config lives in `pyproject.toml` (line length 100). It is not installed by
+  default — do not add it as a hard requirement.
+- Docstrings state the module's **responsibility and boundaries**, not just its contents.
+
+## Determinism
+
+Given the same fixtures, seed, and policy, an episode must produce byte-identical metrics.
+No wall-clock time, no unseeded randomness, no set/dict iteration order dependence, no
+filesystem ordering dependence. Tests must not require network access, GPU hardware, or
+external datasets.
+
+## Synthetic data
+
+All profile numbers, traces, predictions, and ground truth under `data/` are **synthetic
+placeholders, not empirical measurements.** Keep that label visible in fixture names and
+documentation. Never present them as hardware results.
+
+## Branch workflow
+
+- **Never commit to `main`.** `develop/v1` is the integration branch.
+- Every feature branch is created from the **latest `develop/v1`**. `develop/v1` is a
+  branch name containing a slash, not a namespace — there is no branch hierarchy.
+- Implement only the current branch's responsibility; run the tests; commit logical,
+  reviewable changes using conventional commit messages.
+- **Do not merge into `develop/v1` without explicit authorisation from the owner.**
+
+## Commands
+
+```bash
+python -m venv .venv && .venv/bin/pip install -e ".[dev]"   # setup
+.venv/bin/pytest                                            # tests
+```
