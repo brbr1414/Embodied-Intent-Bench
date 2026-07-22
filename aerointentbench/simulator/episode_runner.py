@@ -24,7 +24,7 @@ import logging
 from collections.abc import Sequence
 from typing import Final
 
-from aerointentbench.executor.base import ExecutionRequest, Executor
+from aerointentbench.executor.base import ExecutionRequest, Executor, executor_id_of
 from aerointentbench.schemas.configuration import ConfigCatalog
 from aerointentbench.schemas.contract import Contract
 from aerointentbench.schemas.episode import Episode
@@ -63,7 +63,7 @@ class EpisodeRunner:
         "_contract",
         "_episode",
         "_executor",
-        "_executor_name",
+        "_executor_id",
         "_max_steps",
         "_network",
         "_policy",
@@ -87,7 +87,6 @@ class EpisodeRunner:
         action_validator: ActionValidator,
         termination_conditions: Sequence[TerminationCondition] = DEFAULT_TERMINATION_CONDITIONS,
         policy_name: str = "",
-        executor_name: str = "",
         max_steps: int = DEFAULT_MAX_STEPS,
     ) -> None:
         self._episode = episode
@@ -102,7 +101,10 @@ class EpisodeRunner:
         self._validator = action_validator
         self._conditions = tuple(termination_conditions)
         self._policy_name = policy_name or type(policy).__name__
-        self._executor_name = executor_name or type(executor).__name__
+        # Read off the executor itself. Accepting a name here is what previously let a
+        # ReplayExecutor be recorded as "profile": two sources of truth, one of them a
+        # default that no caller had to override.
+        self._executor_id = executor_id_of(executor)
         self._max_steps = max_steps
 
     def run(self) -> EpisodeRecord:
@@ -195,7 +197,7 @@ class EpisodeRunner:
             episode_id=self._episode.episode_id,
             contract_id=self._contract.contract_id,
             policy_name=self._policy_name,
-            executor_name=self._executor_name,
+            executor_id=self._executor_id,
             steps=tuple(steps),
             termination_reason=reason,
             final_time_s=state.current_time_s,

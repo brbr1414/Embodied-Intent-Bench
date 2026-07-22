@@ -299,7 +299,7 @@ def test_a_missing_record_is_a_failed_inference_not_a_crash(replay_records, requ
 
 
 def test_strict_mode_treats_a_gap_as_a_fixture_bug(replay_records, request_for) -> None:
-    with pytest.raises(SchemaValidationError, match="no entry for frame 999"):
+    with pytest.raises(SchemaValidationError, match="frame 999"):
         ReplayExecutor(replay_records, strict=True).execute(
             request_for("CFG_LOCAL_LIGHT", frame_id=999)
         )
@@ -349,8 +349,9 @@ def test_the_real_executor_stub_fails_loudly(request_for) -> None:
 
     Returning a failed result for every frame would look like a benchmark outcome.
     """
-    with pytest.raises(NotImplementedError, match="interface stub"):
-        RealSegmentationExecutor().execute(request_for("CFG_LOCAL_LIGHT"))
+    # Construction raises, so selecting it fails before step 0 rather than after a mission.
+    with pytest.raises(NotImplementedError, match="not implemented in V1"):
+        RealSegmentationExecutor()
 
 
 # --- the registry -----------------------------------------------------------------------------
@@ -361,7 +362,10 @@ def test_every_v1_backend_is_registered() -> None:
 
 
 def test_the_registry_builds_a_working_executor(profiles, request_for) -> None:
-    executor = executor_registry.create("profile", profiles=profiles)
+    from aerointentbench.executor.registry import ExecutorContext, build_executor
+
+    executor = build_executor("profile", ExecutorContext(episode_id="E", profiles=profiles))
+    assert executor.executor_id == "profile"
     assert executor.execute(request_for("CFG_LOCAL_LIGHT")).success
 
 

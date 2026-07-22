@@ -48,7 +48,7 @@ class EpisodeMetrics:
     episode_id: str
     contract_id: str
     policy: str
-    executor: str
+    executor_id: str
 
     mission_success: bool
     quality: TaskEvaluationResult
@@ -90,7 +90,7 @@ class EpisodeMetrics:
             "episode_id": self.episode_id,
             "contract_id": self.contract_id,
             "policy": self.policy,
-            "executor": self.executor,
+            "executor_id": self.executor_id,
             "mission_success": self.mission_success,
             "quality": self.quality.to_dict(),
             "constraints": {
@@ -161,7 +161,7 @@ def compute_episode_metrics(
         episode_id=record.episode_id,
         contract_id=record.contract_id,
         policy=record.policy_name,
-        executor=record.executor_name,
+        executor_id=record.executor_id,
         mission_success=all(outcome.satisfied for outcome in outcomes),
         quality=evaluation,
         quality_success=quality.satisfied,

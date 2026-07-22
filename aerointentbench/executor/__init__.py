@@ -14,7 +14,15 @@ Modules
                                    the remote latency model. The V1 default.
 - ``replay_executor``           -- precomputed outcomes keyed by frame x configuration.
 - ``real_segmentation_executor``-- documented stub; no ML dependency in V1.
-- ``registry``                  -- name-to-backend mapping for the composition root.
+- ``registry``                  -- name-to-backend mapping plus ``ExecutorContext`` and
+                                   ``build_executor``, the single construction path.
+
+Provenance
+----------
+Every backend carries a stable ``executor_id`` equal to its registry name, and
+``executor_id_of`` reads it off the object. The name recorded in a result is derived from
+the executor that ran, never supplied alongside it, so a result cannot misreport its
+backend.
 
 Boundaries
 ----------
@@ -34,6 +42,7 @@ from aerointentbench.executor.base import (
     FailureReason,
     Prediction,
     PredictionSource,
+    executor_id_of,
 )
 from aerointentbench.executor.profile_executor import (
     DEFAULT_REMOTE_TIMEOUT_S,
@@ -41,20 +50,31 @@ from aerointentbench.executor.profile_executor import (
     remote_latency_s,
     transfer_time_s,
 )
-from aerointentbench.executor.real_segmentation_executor import RealSegmentationExecutor
-from aerointentbench.executor.registry import executor_registry
+from aerointentbench.executor.real_segmentation_executor import (
+    NOT_IMPLEMENTED_MESSAGE,
+    RealSegmentationExecutor,
+)
+from aerointentbench.executor.registry import (
+    ExecutorContext,
+    build_executor,
+    executor_registry,
+)
 from aerointentbench.executor.replay_executor import (
     ReplayExecutor,
     ReplayRecord,
+    ReplayRecordSet,
+    load_replay_record_set,
     load_replay_records,
     make_replay_executor,
 )
 
 __all__ = [
     "DEFAULT_REMOTE_TIMEOUT_S",
+    "NOT_IMPLEMENTED_MESSAGE",
     "ExecutionRequest",
     "ExecutionResult",
     "Executor",
+    "ExecutorContext",
     "FailureReason",
     "Prediction",
     "PredictionSource",
@@ -62,7 +82,11 @@ __all__ = [
     "RealSegmentationExecutor",
     "ReplayExecutor",
     "ReplayRecord",
+    "ReplayRecordSet",
+    "build_executor",
+    "executor_id_of",
     "executor_registry",
+    "load_replay_record_set",
     "load_replay_records",
     "make_replay_executor",
     "remote_latency_s",

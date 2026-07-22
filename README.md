@@ -101,6 +101,36 @@ Useful flags: `--hide-profiles` withholds public configuration profiles from the
 `--include-detail` adds the step log and raw evidence (large, and it contains
 ground-truth-derived fields — do not publish a detailed result file).
 
+### Execution backends
+
+`--executor` selects how a chosen configuration is turned into a result. Profile is the
+default; existing commands are unaffected.
+
+| Backend | What it does | Numbers are |
+|---|---|---|
+| `profile` (default) | Synthesises latency, energy, and communication from a per-platform profile, plus the remote-latency network model | **synthetic** |
+| `replay` | Serves precomputed `frame × config` records from `data/predictions/`, resolved by the episode's ID. The intended bridge to real predictions | replayed |
+| `real_segmentation` | V1 **stub**; selecting it fails immediately with a clear message | — |
+
+```bash
+# replay a recorded set (must declare this episode's episode_id under predictions/)
+python -m aerointentbench.run_benchmark \
+  --episode data/episodes/episode_001.json \
+  --contract data/contracts/contract_001.json \
+  --policy rule_based --executor replay \
+  --output results/episode_001_replay.json
+```
+
+A record set is captured from the profile executor with
+`python -m aerointentbench.tools.record_replay --episode … --output …`. The shipped
+`synthetic_replay_episode_001.json` was made this way; it keeps only the policy-visible
+prediction fields, so replay reproduces the profile run's **resources exactly** (latency,
+energy, communication) while quality scores as all-false-positive. Replay is the seam a
+real hardware capture would fill; the executor and loader do not change when it does.
+
+The executor that produced a result is recorded in the result JSON as `executor_id`, read
+from the executor object itself so it cannot disagree with what actually ran.
+
 ### Measured baselines
 
 Pooled over 50 seeds per episode (n = 150), because three episodes can only produce a

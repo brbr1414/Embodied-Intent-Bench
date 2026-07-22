@@ -135,13 +135,30 @@ documentation. Never present them as hardware results.
 
 ```bash
 python -m venv .venv && .venv/bin/pip install -e ".[dev]"   # setup
-.venv/bin/pytest                                            # 454 tests
+.venv/bin/pytest                                            # 483 tests
 .venv/bin/ruff check . && .venv/bin/ruff format --check .   # lint and format
 
-# run the benchmark
+# run the benchmark (profile is the default executor)
 .venv/bin/python -m aerointentbench.run_benchmark --suite \
   --contract data/contracts/contract_001.json --policy rule_based
+
+# select an executor: profile | replay | real_segmentation
+.venv/bin/python -m aerointentbench.run_benchmark \
+  --episode data/episodes/episode_001.json \
+  --contract data/contracts/contract_001.json --policy rule_based --executor replay
+
+# capture a replay set from the profile executor
+.venv/bin/python -m aerointentbench.tools.record_replay \
+  --episode data/episodes/episode_001.json --output data/predictions/synthetic_replay_episode_001.json
 
 # regenerate the pinned reference results (review the diff!)
 .venv/bin/python -m tests.test_reference_suite --update
 ```
+
+## Executors
+
+`--executor` chooses the backend; `profile` is the default and existing commands are
+unchanged. `replay` serves precomputed `frame × config` records from `data/predictions/`,
+resolved by `episode_id`, and is the bridge to real predictions. `real_segmentation` is a
+V1 stub whose construction raises. The backend that ran is recorded as `executor_id`, read
+from the executor object so it cannot be mislabelled; do not add a parallel name parameter.

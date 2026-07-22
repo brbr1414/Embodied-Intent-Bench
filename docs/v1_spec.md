@@ -552,6 +552,33 @@ encoded the frame before discovering it could not send it — but counts **zero*
 communication, since nothing reached the server. Packet loss is recorded in the step log
 and applies no latency penalty: V1 models no retransmission.
 
+## 7b. Execution backends
+
+`--executor` selects how a chosen configuration becomes an `ExecutionResult`. The
+`EpisodeRunner` depends only on the generic `Executor` interface; it never branches on the
+backend. Construction goes through the executor registry, from a uniform `ExecutorContext`,
+so the composition root — not the runner — owns backend-specific loading.
+
+| Backend | Behaviour | Provenance |
+|---|---|---|
+| `profile` (default) | Costs synthesised from the per-platform profile plus the §7 remote-latency model. All values synthetic. | `profile` |
+| `replay` | Serves precomputed `frame × config` records loaded from `data/predictions/`, resolved by the episode's `episode_id`. | `replay` |
+| `real_segmentation` | V1 stub. **Construction raises**, so selection fails before step 0 with *"not implemented in V1. Use profile or replay."* | — |
+
+**Replay resolution.** A record set declares the `episode_id` it was recorded from; a data
+root holds at most one set per episode, checked at load. Selecting `replay` for an episode
+with no set is an error naming how to record one — never a silent fall back to `profile`,
+which would mix two provenances in one run. A missing individual record is a recorded failed
+inference by default (a slow policy can skip frames), or an error under `--replay-strict`.
+
+**Recording.** `python -m aerointentbench.tools.record_replay` captures a full-coverage set
+from the profile executor. This is capture, not fabrication: it writes down exactly what the
+profile run produced. It keeps only policy-visible prediction fields, so a replayed run
+reproduces the profile run's resources exactly while quality scores as all-false-positive —
+replay is exact for the plumbing, and a set that retained the hidden fields would be needed
+to reproduce a quality score. When real models arrive, a hardware capture emits this same
+format and nothing downstream changes.
+
 ## 8. Battery
 
 Battery is tracked internally as **energy in joules**.
@@ -789,16 +816,22 @@ A result file carries `schema_version` like every other document:
   "schema_version": "1.0",
   "benchmark_version": "0.1.0.dev0",
   "policy": "rule_based",
-  "executor": "profile",
+  "executor_id": "profile",
+  "repeats": 1,
   "aggregate": { "episode_count": 3, "mission_success_rate": 1.0, "rates": {...}, "means": {...} },
-  "episodes": [ { "mission_success": true, "quality": {...}, "constraints": {...},
-                  "violations": {...}, "resources": {...}, "behaviour": {...},
-                  "record": {...} } ]
+  "episodes": [ { "mission_success": true, "executor_id": "profile", "quality": {...},
+                  "constraints": {...}, "violations": {...}, "resources": {...},
+                  "behaviour": {...}, "record": {...} } ]
 }
 ```
 
 Written with sorted keys, so re-running an unchanged benchmark produces a **byte-identical
 file** and a determinism regression shows up as a diff in review.
+
+`executor_id` records which backend produced the result — `profile`, `replay`, or an
+`unregistered:<ClassName>` for a programmatically injected one. It is read from the executor
+object rather than named alongside it, so it can never misreport the backend that ran; the
+suite-level `executor_id` is the sorted set of what actually ran across its episodes.
 
 **The step log and raw evidence are excluded by default.** Beyond size — a 900 s episode
 logs 900 steps and thousands of predicted instances — raw evidence carries

@@ -53,7 +53,7 @@ def _record(**overrides) -> EpisodeRecord:
         episode_id="EPISODE_001",
         contract_id="CONTRACT_001",
         policy_name="rule_based",
-        executor_name="profile",
+        executor_id="profile",
         steps=(_step(),),
         termination_reason=TerminationReason.PATH_COMPLETE,
         final_time_s=900.0,
