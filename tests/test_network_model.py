@@ -42,9 +42,7 @@ def test_observation_follows_the_segment_in_force(
 
 def test_lookup_returns_the_whole_observation(degrading_model: TraceBasedNetworkModel) -> None:
     observation = degrading_model.observe(400.0)
-    assert observation == NetworkObservation(
-        bandwidth_mbps=8.0, rtt_ms=70.0, packet_loss_frac=0.01
-    )
+    assert observation == NetworkObservation(bandwidth_mbps=8.0, rtt_ms=70.0, packet_loss_frac=0.01)
 
 
 def test_times_past_the_trace_end_clamp_to_the_last_segment(
@@ -78,9 +76,7 @@ def test_single_segment_trace(data_dir: Path) -> None:
 
 def test_disconnection_is_observable(data_dir: Path) -> None:
     model = TraceBasedNetworkModel(
-        load_network_trace(
-            data_dir / "network_traces" / "synthetic_network_disconnecting_001.json"
-        )
+        load_network_trace(data_dir / "network_traces" / "synthetic_network_disconnecting_001.json")
     )
     assert not model.observe(399.0).is_disconnected
     assert model.observe(400.0).is_disconnected

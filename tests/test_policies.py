@@ -60,7 +60,7 @@ def rule_based(profiles) -> RuleBasedPolicy:
     return RuleBasedPolicy(public_profiles=profiles.public_view())
 
 
-# --- static baselines ------------------------------------------------------------------
+# --- static baselines ---------------------------------------------------------------------------
 
 
 def test_a_static_policy_ignores_everything(catalog, contract) -> None:
@@ -79,7 +79,7 @@ def test_a_static_policy_reports_honestly_when_it_does_not_apply(catalog, contra
     assert policy.select_config(contract, _state(), restricted) == "CFG_LOCAL_STRONG"
 
 
-# --- latency estimation -----------------------------------------------------------------
+# --- latency estimation -------------------------------------------------------------------------
 
 
 def test_a_policy_estimates_remote_latency_from_what_it_observes(catalog, profiles) -> None:
@@ -100,16 +100,20 @@ def test_the_estimate_is_approximate_not_the_executors_number(catalog, profiles)
 
     remote = catalog.get("CFG_REMOTE_STRONG")
     estimate = estimated_latency_s(remote, profiles.public_view().get(remote.config_id), GOOD)
-    actual = ProfileExecutor(profiles).execute(
-        ExecutionRequest(
-            episode_id="E",
-            frame_id=0,
-            configuration=remote,
-            network=GOOD,
-            current_time_s=0.0,
-            seed=1,
+    actual = (
+        ProfileExecutor(profiles)
+        .execute(
+            ExecutionRequest(
+                episode_id="E",
+                frame_id=0,
+                configuration=remote,
+                network=GOOD,
+                current_time_s=0.0,
+                seed=1,
+            )
         )
-    ).latency_s
+        .latency_s
+    )
 
     assert estimate < actual, "the undisclosed download leg makes the estimate optimistic"
     assert estimate == pytest.approx(actual, rel=0.05), "but it is close enough to act on"
@@ -118,14 +122,16 @@ def test_the_estimate_is_approximate_not_the_executors_number(catalog, profiles)
 def test_local_latency_needs_no_network(catalog, profiles) -> None:
     local = catalog.get("CFG_LOCAL_STRONG")
     view = profiles.public_view()
-    assert estimated_latency_s(local, view.get(local.config_id), DISCONNECTED) == pytest.approx(0.45)
+    assert estimated_latency_s(local, view.get(local.config_id), DISCONNECTED) == pytest.approx(
+        0.45
+    )
 
 
 def test_there_is_no_estimate_without_a_profile(catalog) -> None:
     assert estimated_latency_s(catalog.get("CFG_LOCAL_LIGHT"), None, GOOD) is None
 
 
-# --- rule-based: quality preference --------------------------------------------------------
+# --- rule-based: quality preference -------------------------------------------------------------
 
 
 def test_it_takes_the_best_quality_it_can_afford(rule_based, catalog, contract) -> None:
@@ -146,7 +152,7 @@ def test_the_latency_ceiling_is_tunable(profiles, catalog, contract) -> None:
     assert patient.select_config(contract, _state(network=POOR), catalog) == "CFG_REMOTE_STRONG"
 
 
-# --- rule-based: reachability ------------------------------------------------------------------
+# --- rule-based: reachability -------------------------------------------------------------------
 
 
 def test_it_does_not_select_remote_into_a_dead_link(rule_based, catalog, contract) -> None:
@@ -154,7 +160,7 @@ def test_it_does_not_select_remote_into_a_dead_link(rule_based, catalog, contrac
     assert catalog.get(chosen).strategy.placement.value == "local"
 
 
-# --- rule-based: privacy -------------------------------------------------------------------------
+# --- rule-based: privacy ------------------------------------------------------------------------
 
 
 def test_it_respects_local_only(rule_based, catalog, local_only_contract) -> None:
@@ -177,7 +183,7 @@ def test_an_impossible_pool_still_returns_an_action(rule_based, contract, catalo
     assert rule_based.select_config(local_only, _state(), remote_only) == "CFG_REMOTE_STRONG"
 
 
-# --- rule-based: communication budget ---------------------------------------------------------------
+# --- rule-based: communication budget -----------------------------------------------------------
 
 
 def test_it_stops_using_remote_once_the_budget_is_spent(rule_based, catalog, contract) -> None:
@@ -185,9 +191,12 @@ def test_it_stops_using_remote_once_the_budget_is_spent(rule_based, catalog, con
     nearly_gone = _state(communication_mb=contract.communication_budget_mb - 1.0)
 
     assert rule_based.select_config(contract, plenty, catalog) == "CFG_REMOTE_STRONG"
-    assert catalog.get(
-        rule_based.select_config(contract, nearly_gone, catalog)
-    ).strategy.placement.value == "local"
+    assert (
+        catalog.get(
+            rule_based.select_config(contract, nearly_gone, catalog)
+        ).strategy.placement.value
+        == "local"
+    )
 
 
 def test_it_holds_back_a_reserve(profiles, catalog, contract) -> None:
@@ -197,19 +206,21 @@ def test_it_holds_back_a_reserve(profiles, catalog, contract) -> None:
         settings=RuleBasedSettings(communication_reserve_frac=0.5),
     )
     half_spent = _state(communication_mb=contract.communication_budget_mb * 0.5)
-    assert catalog.get(
-        policy.select_config(contract, half_spent, catalog)
-    ).strategy.placement.value == "local"
+    assert (
+        catalog.get(policy.select_config(contract, half_spent, catalog)).strategy.placement.value
+        == "local"
+    )
 
 
 def test_a_zero_budget_rules_out_remote_from_the_start(rule_based, catalog, contract) -> None:
     no_budget = dataclasses.replace(contract, communication_budget_mb=0.0)
-    assert catalog.get(
-        rule_based.select_config(no_budget, _state(), catalog)
-    ).strategy.placement.value == "local"
+    assert (
+        catalog.get(rule_based.select_config(no_budget, _state(), catalog)).strategy.placement.value
+        == "local"
+    )
 
 
-# --- rule-based: deadline and battery pressure ----------------------------------------------------
+# --- rule-based: deadline and battery pressure --------------------------------------------------
 
 
 def test_deadline_pressure_switches_to_the_fastest_option(rule_based, catalog, contract) -> None:
@@ -230,10 +241,12 @@ def test_battery_pressure_switches_to_the_fastest_option(rule_based, catalog, co
 
 
 def test_a_healthy_battery_does_not_trigger_the_fast_path(rule_based, catalog, contract) -> None:
-    assert rule_based.select_config(contract, _state(battery_frac=0.80), catalog) != "CFG_LOCAL_LIGHT"
+    assert (
+        rule_based.select_config(contract, _state(battery_frac=0.80), catalog) != "CFG_LOCAL_LIGHT"
+    )
 
 
-# --- rule-based: degradation and determinism ---------------------------------------------------------
+# --- rule-based: degradation and determinism ----------------------------------------------------
 
 
 def test_it_still_runs_without_profiles(catalog, contract) -> None:
@@ -262,7 +275,7 @@ def test_a_policy_never_sees_more_than_the_episode_allows(rule_based, catalog, c
     assert "CFG_REMOTE_STRONG" not in restricted
 
 
-# --- the registry ---------------------------------------------------------------------------------------
+# --- the registry -------------------------------------------------------------------------------
 
 
 def test_every_v1_baseline_is_registered() -> None:

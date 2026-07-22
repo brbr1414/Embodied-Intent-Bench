@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import dataclasses
-
 import pytest
 
 from aerointentbench.metrics import (
@@ -110,7 +108,12 @@ def test_mission_success_needs_every_constraint(contract) -> None:
     ],
 )
 def test_each_violation_reports_its_margin(
-    contract, field: str, value: float, attribute: str, margin_attribute: str, expected_margin: float
+    contract,
+    field: str,
+    value: float,
+    attribute: str,
+    margin_attribute: str,
+    expected_margin: float,
 ) -> None:
     """Missing a deadline by half a second and by five minutes are both False."""
     metrics = compute_episode_metrics(_record(**{field: value}), _evaluation(), contract)
@@ -204,7 +207,12 @@ def test_mean_latency_excludes_failed_executions(contract) -> None:
 
 def test_mean_latency_of_no_successful_execution_is_zero(contract) -> None:
     record = _record(steps=(_step(success=False),), failed_inference_count=1)
-    assert compute_episode_metrics(record, _evaluation(), contract).mean_end_to_end_inference_latency_ms == 0.0
+    assert (
+        compute_episode_metrics(
+            record, _evaluation(), contract
+        ).mean_end_to_end_inference_latency_ms
+        == 0.0
+    )
 
 
 def test_energy_components_stay_separable(contract) -> None:
@@ -234,7 +242,9 @@ def test_mission_success_rate_is_the_fraction_that_passed(contract) -> None:
     passing = _metrics(contract)
     failing = _metrics(contract, cumulative_communication_mb=9999.0)
 
-    assert aggregate_metrics([passing, passing, failing]).mission_success_rate == pytest.approx(2 / 3)
+    assert aggregate_metrics([passing, passing, failing]).mission_success_rate == pytest.approx(
+        2 / 3
+    )
 
 
 def test_the_rates_decompose_the_headline(contract) -> None:

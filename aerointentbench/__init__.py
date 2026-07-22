@@ -13,7 +13,7 @@ See ``docs/v1_spec.md`` for the V1 scope and ``docs/architecture.md`` for the mo
 boundaries every contributor is expected to respect.
 """
 
-__all__ = ["__version__", "SCHEMA_VERSION"]
+__all__ = ["SCHEMA_VERSION", "__version__"]
 
 __version__ = "0.1.0.dev0"
 

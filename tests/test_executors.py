@@ -268,9 +268,7 @@ def replay_records(data_dir: Path):
 
 
 def test_replay_serves_the_recorded_outcome(replay_records, request_for) -> None:
-    result = ReplayExecutor(replay_records).execute(
-        request_for("CFG_REMOTE_STRONG", frame_id=0)
-    )
+    result = ReplayExecutor(replay_records).execute(request_for("CFG_REMOTE_STRONG", frame_id=0))
     assert result.success
     assert result.latency_s == pytest.approx(0.750)
     assert result.communication_mb == pytest.approx(1.55)
@@ -286,9 +284,7 @@ def test_replay_passes_the_payload_through_untouched(replay_records, request_for
 
 
 def test_replay_reproduces_a_recorded_failure(replay_records, request_for) -> None:
-    result = ReplayExecutor(replay_records).execute(
-        request_for("CFG_REMOTE_STRONG", frame_id=1)
-    )
+    result = ReplayExecutor(replay_records).execute(request_for("CFG_REMOTE_STRONG", frame_id=1))
     assert not result.success
     assert result.failure_reason is FailureReason.NETWORK_UNAVAILABLE
     assert result.prediction is None
@@ -297,9 +293,7 @@ def test_replay_reproduces_a_recorded_failure(replay_records, request_for) -> No
 
 def test_a_missing_record_is_a_failed_inference_not_a_crash(replay_records, request_for) -> None:
     """A slow configuration skips frames, so a policy can reach one nobody precomputed."""
-    result = ReplayExecutor(replay_records).execute(
-        request_for("CFG_LOCAL_LIGHT", frame_id=999)
-    )
+    result = ReplayExecutor(replay_records).execute(request_for("CFG_LOCAL_LIGHT", frame_id=999))
     assert not result.success
     assert result.failure_reason is FailureReason.NO_PREDICTION_AVAILABLE
 

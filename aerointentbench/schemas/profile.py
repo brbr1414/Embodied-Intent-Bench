@@ -221,9 +221,7 @@ def load_profile_catalog(path: Path) -> ProfileCatalog:
 
     profiles = {
         config_id: _read_profile(entry)
-        for config_id, entry in reader.get_id_keyed_object(
-            "profiles", value_fields=_PROFILE_FIELDS
-        )
+        for config_id, entry in reader.get_id_keyed_object("profiles", value_fields=_PROFILE_FIELDS)
     }
     if not profiles:
         raise SchemaValidationError(f"{path.name} -> ProfileCatalog: 'profiles' must not be empty")

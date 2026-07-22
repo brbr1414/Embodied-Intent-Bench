@@ -27,9 +27,9 @@ from pathlib import Path
 from aerointentbench.benchmark import BenchmarkData, SuiteResult, run_suite
 from aerointentbench.executor.registry import executor_registry
 from aerointentbench.policies.registry import policy_registry
+from aerointentbench.schemas.contract import load_contract
 from aerointentbench.schemas.episode import load_episode
 from aerointentbench.schemas.loading import SchemaValidationError
-from aerointentbench.schemas.contract import load_contract
 
 __all__ = ["build_parser", "main"]
 
@@ -106,9 +106,7 @@ def main(argv: list[str] | None = None) -> int:
         data = BenchmarkData(args.data_root)
         contract = load_contract(args.contract)
         episodes = (
-            data.episodes()
-            if args.suite
-            else tuple(load_episode(path) for path in args.episodes)
+            data.episodes() if args.suite else tuple(load_episode(path) for path in args.episodes)
         )
         result = run_suite(
             data=data,
@@ -141,7 +139,9 @@ def main(argv: list[str] | None = None) -> int:
 def _print_summary(result: SuiteResult, *, output: Path | None) -> None:
     aggregate = result.aggregate
     print(f"policy: {result.policy_name}   executor: {result.executor_name}")
-    print(f"{'episode':<16}{'success':>9}{'quality':>9}{'MB':>9}{'batt':>8}{'time s':>9}{'switch':>8}")
+    print(
+        f"{'episode':<16}{'success':>9}{'quality':>9}{'MB':>9}{'batt':>8}{'time s':>9}{'switch':>8}"
+    )
     for episode in result.episodes:
         metrics = episode.metrics
         print(
