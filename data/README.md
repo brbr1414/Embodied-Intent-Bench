@@ -21,7 +21,7 @@ inputs to the runner. The software that consumes them lives in `aerointentbench/
 | `paths/` | Predefined flight paths, described by length | `feature/v1-simulator-core` |
 | `profiles/` | Per-platform configuration profiles: compute latency, on-board energy, transfer sizes, quality tier | `feature/v1-executors` |
 | `predictions/` | Precomputed frame × config replay records for `ReplayExecutor` | `feature/v1-executors` (envelope), `feature/v1-human-search-task` (full sets) |
-| `ground_truth/` | Hidden ground truth, read **only** by task evaluators | `feature/v1-human-search-task` |
+| `ground_truth/` | Hidden ground truth, keyed by frame stream. Read **only** by task evaluators and the synthetic prediction source | `feature/v1-human-search-task` |
 
 ## Rules
 

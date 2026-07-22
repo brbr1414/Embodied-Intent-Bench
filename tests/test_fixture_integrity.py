@@ -24,6 +24,7 @@ from aerointentbench.schemas import (
     load_task_spec,
 )
 from aerointentbench.executor import load_replay_records
+from aerointentbench.tasks.human_search_segmentation import load_human_search_ground_truth
 
 LOADERS_BY_DIRECTORY = {
     "contracts": load_contract,
@@ -35,6 +36,7 @@ LOADERS_BY_DIRECTORY = {
     "paths": load_path_spec,
     "profiles": load_profile_catalog,
     "predictions": load_replay_records,
+    "ground_truth": load_human_search_ground_truth,
 }
 
 
@@ -207,6 +209,31 @@ def test_every_selectable_configuration_is_profiled(data_dir: Path) -> None:
         )
 
 
+def test_every_episode_has_ground_truth_for_its_frame_stream(data_dir: Path) -> None:
+    """Ground truth is keyed on the stream, so episodes flying the same scene share it."""
+    streams = {
+        load_human_search_ground_truth(path).frame_stream_id
+        for path in _fixture_paths(data_dir, "ground_truth")
+    }
+    for path in _fixture_paths(data_dir, "episodes"):
+        assert load_episode(path).frame_stream_id in streams, path
+
+
+def test_ground_truth_targets_fall_inside_the_mission(data_dir: Path) -> None:
+    """A target visible only after the path ends could never be found by any policy."""
+    paths = {spec.path_id: spec for spec in (load_path_spec(p) for p in _fixture_paths(data_dir, "paths"))}
+    episodes = [load_episode(path) for path in _fixture_paths(data_dir, "episodes")]
+    shortest_mission_frames = min(
+        int(paths[episode.path_id].length_m / episode.velocity_mps) for episode in episodes
+    )
+
+    for path in _fixture_paths(data_dir, "ground_truth"):
+        for target in load_human_search_ground_truth(path).targets:
+            assert target.last_frame_id < shortest_mission_frames, (
+                f"{path}: {target.track_id} is only visible after the mission ends"
+            )
+
+
 def test_measurement_bearing_fixtures_are_marked_synthetic(data_dir: Path) -> None:
     """Profiles, traces, predictions, and ground truth carry invented numbers.
 
@@ -214,7 +241,7 @@ def test_measurement_bearing_fixtures_are_marked_synthetic(data_dir: Path) -> No
     mistaken for a measurement. Specification files (contracts, episodes, task specs,
     catalogs) state choices rather than measurements and are exempt.
     """
-    for directory in ("platforms", "network_traces", "profiles", "predictions"):
+    for directory in ("platforms", "network_traces", "profiles", "predictions", "ground_truth"):
         for path in _fixture_paths(data_dir, directory):
             assert path.name.startswith("synthetic_"), (
                 f"{path} carries invented numbers and must be named synthetic_*"
