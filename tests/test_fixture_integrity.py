@@ -18,6 +18,7 @@ from aerointentbench.schemas import (
     load_contract,
     load_episode,
     load_network_trace,
+    load_path_spec,
     load_platform_profile,
     load_task_spec,
 )
@@ -29,6 +30,7 @@ LOADERS_BY_DIRECTORY = {
     "platforms": load_platform_profile,
     "task_specs": load_task_spec,
     "network_traces": load_network_trace,
+    "paths": load_path_spec,
 }
 
 
@@ -71,6 +73,7 @@ def test_episode_references_resolve(data_dir: Path) -> None:
     trace_ids = {
         load_network_trace(path).trace_id for path in _fixture_paths(data_dir, "network_traces")
     }
+    path_ids = {load_path_spec(path).path_id for path in _fixture_paths(data_dir, "paths")}
     known_config_ids: set[str] = set()
     for path in _fixture_paths(data_dir, "configs"):
         known_config_ids.update(load_config_catalog(path).ids())
@@ -79,6 +82,7 @@ def test_episode_references_resolve(data_dir: Path) -> None:
         episode = load_episode(path)
         assert episode.platform_id in platform_ids, path
         assert episode.network_trace_id in trace_ids, path
+        assert episode.path_id in path_ids, path
         assert set(episode.allowed_config_ids) <= known_config_ids, path
 
 

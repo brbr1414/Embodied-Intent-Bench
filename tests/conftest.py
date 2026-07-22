@@ -44,6 +44,68 @@ def write_json(tmp_path: Path) -> Callable[[dict[str, Any]], Path]:
 
 
 @pytest.fixture
+def contract(data_dir: Path):
+    """The default example contract: target_f1 >= 0.80, 60 s, 50 MB, 20 %, remote_allowed."""
+    from aerointentbench.schemas import load_contract
+
+    return load_contract(data_dir / "contracts" / "contract_001.json")
+
+
+@pytest.fixture
+def local_only_contract(data_dir: Path):
+    from aerointentbench.schemas import load_contract
+
+    return load_contract(data_dir / "contracts" / "contract_002_local_only.json")
+
+
+@pytest.fixture
+def platform(data_dir: Path):
+    """100 Wh capacity, 180 W flight power, 0.5 J/MB communication."""
+    from aerointentbench.schemas import load_platform_profile
+
+    return load_platform_profile(data_dir / "platforms" / "synthetic_uav_platform_001.json")
+
+
+@pytest.fixture
+def catalog(data_dir: Path):
+    """The three-configuration V1 catalog."""
+    from aerointentbench.schemas import load_config_catalog
+
+    return load_config_catalog(data_dir / "configs" / "config_catalog_001.json")
+
+
+@pytest.fixture
+def episode(data_dir: Path):
+    """EPISODE_001: 80 % battery, degrading network, no initial configuration."""
+    from aerointentbench.schemas import load_episode
+
+    return load_episode(data_dir / "episodes" / "episode_001.json")
+
+
+@pytest.fixture
+def path_spec(data_dir: Path):
+    """PATH_001: 250 m, i.e. 50 s at the episode velocity of 5 m/s."""
+    from aerointentbench.schemas import load_path_spec
+
+    return load_path_spec(data_dir / "paths" / "path_001.json")
+
+
+@pytest.fixture
+def state_manager(episode, platform, path_spec):
+    """A state manager wired with the shipped fixtures and the simple battery model."""
+    from aerointentbench.simulator.battery_model import SimpleBatteryModel
+    from aerointentbench.simulator.path import ConstantVelocityPath
+    from aerointentbench.simulator.state_manager import StateManager
+
+    return StateManager(
+        episode=episode,
+        platform=platform,
+        path=ConstantVelocityPath.from_spec(path_spec, velocity_mps=episode.velocity_mps),
+        battery_model=SimpleBatteryModel(),
+    )
+
+
+@pytest.fixture
 def valid_contract_payload() -> dict[str, Any]:
     """A minimal conforming contract document, for tests that mutate one field at a time."""
     return {
