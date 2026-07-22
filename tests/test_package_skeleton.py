@@ -76,7 +76,13 @@ def test_package_has_no_third_party_runtime_dependencies() -> None:
             )
 
 
-def test_cli_entry_point_is_importable_and_reports_scaffold_status() -> None:
-    from aerointentbench.run_benchmark import main
+def test_cli_entry_point_is_importable() -> None:
+    """The console script declared in pyproject.toml must resolve.
 
-    assert main([]) == 2
+    Behaviour is covered in test_cli.py; this only guards the entry point itself, which a
+    packaging change could break without any test noticing.
+    """
+    from aerointentbench.run_benchmark import build_parser, main
+
+    assert callable(main)
+    assert build_parser().prog == "aerointentbench"
