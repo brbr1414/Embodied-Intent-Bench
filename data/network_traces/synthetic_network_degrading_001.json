@@ -1,0 +1,27 @@
+{
+  "schema_version": "1.0",
+  "trace_id": "NETWORK_DEGRADING_001",
+  "segments": [
+    {
+      "start_s": 0,
+      "end_s": 20,
+      "bandwidth_mbps": 20.0,
+      "rtt_ms": 30.0,
+      "packet_loss_frac": 0.0
+    },
+    {
+      "start_s": 20,
+      "end_s": 40,
+      "bandwidth_mbps": 8.0,
+      "rtt_ms": 70.0,
+      "packet_loss_frac": 0.01
+    },
+    {
+      "start_s": 40,
+      "end_s": 60,
+      "bandwidth_mbps": 2.0,
+      "rtt_ms": 150.0,
+      "packet_loss_frac": 0.03
+    }
+  ]
+}

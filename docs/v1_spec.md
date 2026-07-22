@@ -198,6 +198,17 @@ resolution, frame sampling rate, early-exit index, accelerator, power mode).
 
 **`config_id` is an identifier only.** No component may infer behaviour by parsing it.
 
+Configurations are shipped in a catalog document:
+
+```json
+{ "schema_version": "1.0", "catalog_id": "CATALOG_001", "configs": [ ... ] }
+```
+
+`catalog_id` is optional and identifies the pool; `configs` must be non-empty with unique
+`config_id`s. A catalog is ordered by declaration so that iteration is deterministic, and
+`ConfigCatalog.subset(ids)` produces the episode's allowed pool — the runner hands a policy
+that subset, so a policy cannot select or even see a disallowed configuration.
+
 ### 4.6 Configuration profiles — *synthetic performance*, per platform
 
 ```json
@@ -242,6 +253,29 @@ At least three fixtures: **stable**, **degrading**, **disconnecting**.
 ```
 
 Packet loss is recorded but needs no retransmission model in V1.
+
+Segments are validated at load time to be **ordered and contiguous**, and each covers the
+half-open interval `[start_s, end_s)`. A gap would make the observation at that time
+undefined and an overlap would make it ambiguous; both are load errors rather than
+lookup-time surprises, because the benchmark's determinism depends on every time in the
+trace resolving to exactly one segment.
+
+### 4.9 Shipped fixtures
+
+| File | Contents |
+|---|---|
+| `data/contracts/contract_001.json` | The default example contract (`target_f1 >= 0.80`, `remote_allowed`) |
+| `data/contracts/contract_002_local_only.json` | `local_only` privacy with a zero communication budget |
+| `data/task_specs/human_search_segmentation.json` | The V1 task specification |
+| `data/configs/config_catalog_001.json` | The three-configuration V1 catalog |
+| `data/platforms/synthetic_uav_platform_001.json` | The example UAV platform |
+| `data/network_traces/synthetic_network_{stable,degrading,disconnecting}_001.json` | The three required conditions |
+| `data/episodes/episode_00{1,2,3}*.json` | One episode per network condition |
+
+Files whose numbers are invented rather than chosen — platform profiles, network traces,
+and later configuration profiles, predictions, and ground truth — are named `synthetic_*`
+so a value lifted out of this repository cannot be mistaken for a measurement. A test
+enforces the naming.
 
 ## 5. Policy action and validation
 
