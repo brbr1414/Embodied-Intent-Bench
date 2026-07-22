@@ -1,0 +1,52 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "aerointentbench"
+version = "0.1.0.dev0"
+description = "A benchmark for intent-conditioned, resource-aware inference configuration selection in UAV missions."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { file = "LICENSE" }
+authors = [{ name = "brbr1414" }]
+keywords = ["benchmark", "uav", "edge-inference", "adaptive-inference"]
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+]
+
+# V1 has no runtime dependencies on purpose: the benchmark must run without a
+# GPU and without heavy ML packages. See docs/v1_spec.md ("Dependency policy").
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[project.scripts]
+aerointentbench = "aerointentbench.run_benchmark:main"
+
+[project.urls]
+Repository = "https://github.com/brbr1414/Embodied-Intent-Bench"
+
+[tool.hatch.build.targets.wheel]
+packages = ["aerointentbench"]
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+addopts = "-ra --strict-markers"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["aerointentbench"]
