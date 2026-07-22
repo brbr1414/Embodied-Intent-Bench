@@ -1,69 +1,46 @@
-# Prerequisites
-*.d
+# ---------------------------------------------------------------------------
+# Python (primary language of this repository)
+# ---------------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+dist/
+wheels/
 
-# Compiled Object files
-*.slo
-*.lo
-*.o
-*.obj
+# Virtual environments
+.venv/
+venv/
+env/
 
-# Precompiled Headers
-*.gch
-*.pch
+# Tooling caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+.coverage.*
+htmlcov/
 
-# Linker files
-*.ilk
+# Benchmark run outputs (results are regenerated, never committed)
+results/
 
-# Debugger Files
-*.pdb
+# ---------------------------------------------------------------------------
+# OS / editor
+# ---------------------------------------------------------------------------
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+.vscode/
 
-# Compiled Dynamic libraries
-*.so
-*.dylib
-*.dll
-*.so.*
-
-
-# Fortran module files
-*.mod
-*.smod
-
-# Compiled Static libraries
-*.lai
-*.la
-*.a
-*.lib
-
-# Executables
-*.exe
-*.out
-*.app
-
-# Build directories
+# ---------------------------------------------------------------------------
+# Generic build / temporary artifacts
+# ---------------------------------------------------------------------------
 build/
 Build/
 build-*/
-
-# CMake generated files
-CMakeFiles/
-CMakeCache.txt
-cmake_install.cmake
-Makefile
-install_manifest.txt
-compile_commands.json
-
-# Temporary files
 *.tmp
 *.log
 *.bak
-*.swp
-
-# vcpkg
-vcpkg_installed/
-
-# debug information files
-*.dwo
-
-# test output & cache
-Testing/
 .cache/
