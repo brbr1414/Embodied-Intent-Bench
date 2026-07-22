@@ -16,6 +16,7 @@ Modules
 - ``platform``      -- UAV platform profile: capacity, flight power, comms energy.
 - ``task_spec``     -- task definition: evidence type, matching rule, deduplication.
 - ``network_trace`` -- trace data and the single observation a policy may see.
+- ``path``          -- the predefined path, reduced to the length the loop consumes.
 - ``runtime_state`` -- the policy-visible observation built fresh at every decision step.
 - ``loading``       -- schema-version gate, field validation, and the seam a future
                        migration layer hooks into.
@@ -55,6 +56,7 @@ from aerointentbench.schemas.network_trace import (
     NetworkTraceSegment,
     load_network_trace,
 )
+from aerointentbench.schemas.path import PathSpec, load_path_spec
 from aerointentbench.schemas.platform import (
     PlatformProfile,
     check_episode_power_mode,
@@ -84,6 +86,7 @@ __all__ = [
     "NetworkObservation",
     "NetworkTrace",
     "NetworkTraceSegment",
+    "PathSpec",
     "Placement",
     "PlatformProfile",
     "Precision",
@@ -99,6 +102,7 @@ __all__ = [
     "load_contract",
     "load_episode",
     "load_network_trace",
+    "load_path_spec",
     "load_platform_profile",
     "load_task_spec",
 ]

@@ -56,6 +56,17 @@ On completing a branch, report:
 Each branch implements **only** its own row. Work is not to be consolidated into one
 large branch.
 
+### Where `EpisodeRunner` lands
+
+The loop itself is not in branch 3. It composes an `Executor` (branch 4), an
+`EvidenceTracker` (branch 5), and a `Policy` (branch 6), so writing it earlier would mean
+writing it against interfaces that do not exist yet and rewriting it three times.
+
+Branch 3 delivers the components the loop drives — state transition, network, battery,
+path, timing, termination, action validation — each independently tested. The runner that
+sequences them belongs at the **start of branch 7**, where every dependency exists and the
+composition root is being built anyway.
+
 ## Commit messages
 
 Conventional commits where practical:
