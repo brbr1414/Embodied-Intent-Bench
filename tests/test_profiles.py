@@ -100,7 +100,7 @@ def test_profile_error_message_names_the_offending_configuration(write_json) -> 
 
 @pytest.mark.parametrize("field", ["compute_latency_ms", "onboard_energy_j", "upload_mb"])
 def test_profile_costs_may_not_be_negative(write_json, field: str) -> None:
-    with pytest.raises(SchemaValidationError, match="must be >= 0.0"):
+    with pytest.raises(SchemaValidationError, match=r"must be >= 0\.0"):
         load_profile_catalog(write_json(_payload(**{field: -1.0})))
 
 
@@ -114,7 +114,9 @@ def test_empty_profile_set_is_rejected(write_json) -> None:
 def test_catalog_coverage_is_checked_against_the_episode(profiles: ProfileCatalog) -> None:
     """A missing profile should surface up front, not on whichever step first selects it."""
     check_catalog_is_profiled(
-        profiles, config_ids=("CFG_LOCAL_LIGHT", "CFG_REMOTE_STRONG"), platform_id="UAV_PLATFORM_001"
+        profiles,
+        config_ids=("CFG_LOCAL_LIGHT", "CFG_REMOTE_STRONG"),
+        platform_id="UAV_PLATFORM_001",
     )
     with pytest.raises(SchemaValidationError, match="no profile for configuration"):
         check_catalog_is_profiled(
@@ -157,7 +159,7 @@ def test_public_view_covers_every_profiled_configuration(profiles: ProfileCatalo
 
 
 def test_hidden_view_answers_none_rather_than_raising() -> None:
-    """"I was not told" is an ordinary situation for a policy, not an error."""
+    """ "I was not told" is an ordinary situation for a policy, not an error."""
     view = PublicProfileView.hidden()
     assert not view.is_available
     assert len(view) == 0

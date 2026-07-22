@@ -67,7 +67,9 @@ class ReplayExecutor:
 
     __slots__ = ("_records", "_strict")
 
-    def __init__(self, records: Mapping[tuple[int, str], ReplayRecord], *, strict: bool = False) -> None:
+    def __init__(
+        self, records: Mapping[tuple[int, str], ReplayRecord], *, strict: bool = False
+    ) -> None:
         """Args:
         records: Outcomes keyed by ``(frame_id, config_id)``.
         strict: Whether a missing record raises instead of returning a failed result.
@@ -144,7 +146,9 @@ def _read_record(reader: DocumentReader) -> ReplayRecord:
     if success and failure_reason is not None:
         raise SchemaValidationError(f"{reader.context}: a successful record has no failure_reason")
     if not success and failure_reason is None:
-        raise SchemaValidationError(f"{reader.context}: a failed record must state a failure_reason")
+        raise SchemaValidationError(
+            f"{reader.context}: a failed record must state a failure_reason"
+        )
 
     return ReplayRecord(
         frame_id=reader.get_int("frame_id", minimum=0),

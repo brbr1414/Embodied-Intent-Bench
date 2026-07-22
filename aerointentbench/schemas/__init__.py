@@ -59,6 +59,11 @@ from aerointentbench.schemas.network_trace import (
     load_network_trace,
 )
 from aerointentbench.schemas.path import PathSpec, load_path_spec
+from aerointentbench.schemas.platform import (
+    PlatformProfile,
+    check_episode_power_mode,
+    load_platform_profile,
+)
 from aerointentbench.schemas.profile import (
     ConfigurationProfile,
     ProfileCatalog,
@@ -67,11 +72,6 @@ from aerointentbench.schemas.profile import (
     QualityTier,
     check_catalog_is_profiled,
     load_profile_catalog,
-)
-from aerointentbench.schemas.platform import (
-    PlatformProfile,
-    check_episode_power_mode,
-    load_platform_profile,
 )
 from aerointentbench.schemas.runtime_state import EvidenceSummary, RuntimeState
 from aerointentbench.schemas.task_spec import (
@@ -84,6 +84,7 @@ from aerointentbench.schemas.task_spec import (
 )
 
 __all__ = [
+    "SUPPORTED_SCHEMA_VERSIONS",
     "ComparisonOperator",
     "ConfigCatalog",
     "Configuration",
@@ -107,7 +108,6 @@ __all__ = [
     "PublicProfileView",
     "QualityTier",
     "RuntimeState",
-    "SUPPORTED_SCHEMA_VERSIONS",
     "SchemaValidationError",
     "SchemaVersionError",
     "Strategy",

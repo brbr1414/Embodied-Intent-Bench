@@ -18,10 +18,12 @@ control, or open-ended language understanding.
 
 ## Status
 
-**V1 runnable.** JSON inputs → a deterministic one-second decision loop → policy →
-executor → state and evidence updates → termination → metrics JSON. Remaining work is
-integration testing and documentation cleanup (`test/v1-end-to-end`); see
-[`docs/branching.md`](docs/branching.md).
+**V1 complete.** JSON inputs → a deterministic one-second decision loop → policy → executor
+→ state and evidence updates → termination → metrics JSON. Runs on CPU with **zero runtime
+dependencies**; re-running produces a byte-identical result.
+
+454 tests, clean under `ruff check` and `ruff format`. Known limitations are recorded in
+[`docs/v1_spec.md`](docs/v1_spec.md) §16 rather than left implicit.
 
 ## The loop
 
@@ -61,10 +63,11 @@ Requires **Python 3.11+ and nothing else** — no GPU, no ML frameworks, no netw
 python -m venv .venv
 .venv/bin/pip install -e ".[dev]"
 .venv/bin/pytest
+.venv/bin/ruff check . && .venv/bin/ruff format --check .
 ```
 
-The package declares **zero runtime dependencies**; `pytest` is the only development
-dependency.
+The package declares **zero runtime dependencies**; `pytest` and `ruff` are the only
+development ones.
 
 ## Usage
 
@@ -123,6 +126,17 @@ aerointentbench/
 data/            benchmark specifications and fixtures (all synthetic)
 docs/            specification, architecture, branching
 tests/           pytest suite
+```
+
+## Reproducibility
+
+`tests/reference/baseline_results.json` pins every baseline's score on the shipped fixtures
+and is compared on every test run. A change to a fixture, a profile, the synthetic
+prediction model, the evaluator, or a policy shows up there as a diff — so the benchmark
+cannot move without someone approving the move.
+
+```bash
+python -m tests.test_reference_suite --update   # regenerate, then review the diff
 ```
 
 ## Documentation

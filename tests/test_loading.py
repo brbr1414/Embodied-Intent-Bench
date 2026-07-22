@@ -20,12 +20,11 @@ from aerointentbench.schemas.loading import (
     open_document,
 )
 
-
 # --- schema version gate ---------------------------------------------------------
 
 
 def test_v1_supports_exactly_one_schema_version() -> None:
-    assert SUPPORTED_SCHEMA_VERSIONS == frozenset({"1.0"})
+    assert frozenset({"1.0"}) == SUPPORTED_SCHEMA_VERSIONS
 
 
 def test_missing_schema_version_is_rejected(write_json, valid_contract_payload) -> None:
@@ -52,9 +51,7 @@ def test_non_string_schema_version_is_rejected(write_json, valid_contract_payloa
 # --- strictness ------------------------------------------------------------------
 
 
-def test_unknown_field_is_rejected_rather_than_ignored(
-    write_json, valid_contract_payload
-) -> None:
+def test_unknown_field_is_rejected_rather_than_ignored(write_json, valid_contract_payload) -> None:
     """A typo must fail loudly instead of silently reading as an absent field."""
     valid_contract_payload["deadline_sec"] = 60.0
     with pytest.raises(SchemaValidationError, match=r"unknown field\(s\) \['deadline_sec'\]"):
@@ -67,9 +64,7 @@ def test_missing_required_field_names_the_field(write_json, valid_contract_paylo
         load_contract(write_json(valid_contract_payload))
 
 
-def test_error_message_locates_the_document_and_schema(
-    write_json, valid_contract_payload
-) -> None:
+def test_error_message_locates_the_document_and_schema(write_json, valid_contract_payload) -> None:
     del valid_contract_payload["task_id"]
     path = write_json(valid_contract_payload, name="broken_contract.json")
     with pytest.raises(SchemaValidationError) as error:

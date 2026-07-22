@@ -114,9 +114,7 @@ def load_network_trace(path: Path) -> NetworkTrace:
     return NetworkTrace(trace_id=trace_id, segments=tuple(segments))
 
 
-def _check_contiguous(
-    segments: list[NetworkTraceSegment], *, trace_id: str, context: str
-) -> None:
+def _check_contiguous(segments: list[NetworkTraceSegment], *, trace_id: str, context: str) -> None:
     """Reject traces with gaps, overlaps, or out-of-order segments.
 
     A gap would make the observation at that time undefined; an overlap would make it

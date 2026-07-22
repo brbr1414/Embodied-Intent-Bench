@@ -13,6 +13,7 @@ from pathlib import Path
 import pytest
 
 from aerointentbench import SCHEMA_VERSION
+from aerointentbench.executor import load_replay_records
 from aerointentbench.schemas import (
     load_config_catalog,
     load_contract,
@@ -23,7 +24,6 @@ from aerointentbench.schemas import (
     load_profile_catalog,
     load_task_spec,
 )
-from aerointentbench.executor import load_replay_records
 from aerointentbench.tasks.human_search_segmentation import load_human_search_ground_truth
 
 LOADERS_BY_DIRECTORY = {
@@ -143,8 +143,13 @@ def test_no_episode_is_doomed_on_battery_by_flight_alone(data_dir: Path) -> None
             load_platform_profile(path) for path in _fixture_paths(data_dir, "platforms")
         )
     }
-    paths = {spec.path_id: spec for spec in (load_path_spec(p) for p in _fixture_paths(data_dir, "paths"))}
-    floors = [load_contract(path).min_final_battery_frac for path in _fixture_paths(data_dir, "contracts")]
+    paths = {
+        spec.path_id: spec
+        for spec in (load_path_spec(p) for p in _fixture_paths(data_dir, "paths"))
+    }
+    floors = [
+        load_contract(path).min_final_battery_frac for path in _fixture_paths(data_dir, "contracts")
+    ]
 
     for path in _fixture_paths(data_dir, "episodes"):
         episode = load_episode(path)
@@ -163,7 +168,7 @@ def test_the_mission_is_long_enough_for_battery_to_be_an_observation(data_dir: P
 
     At the original 50 s mission scale the battery moved by 0.025, so a rule such as
     "below 30 %, switch to the light configuration" could never fire and the benchmark
-    could not tell a battery-aware policy from a battery-blind one. See docs/v1_spec.md
+    could not tell a battery-aware policy from a battery-blind one. See docs/v1_spec.md §11
     ("Mission scale").
     """
     minimum_span = 0.30
@@ -174,7 +179,10 @@ def test_the_mission_is_long_enough_for_battery_to_be_an_observation(data_dir: P
             load_platform_profile(path) for path in _fixture_paths(data_dir, "platforms")
         )
     }
-    paths = {spec.path_id: spec for spec in (load_path_spec(p) for p in _fixture_paths(data_dir, "paths"))}
+    paths = {
+        spec.path_id: spec
+        for spec in (load_path_spec(p) for p in _fixture_paths(data_dir, "paths"))
+    }
 
     for path in _fixture_paths(data_dir, "episodes"):
         episode = load_episode(path)
@@ -197,8 +205,7 @@ def test_every_selectable_configuration_is_profiled(data_dir: Path) -> None:
         assert set(profiles) <= known_config_ids, f"{path} profiles an unknown configuration"
 
     platform_ids = {
-        load_platform_profile(path).platform_id
-        for path in _fixture_paths(data_dir, "platforms")
+        load_platform_profile(path).platform_id for path in _fixture_paths(data_dir, "platforms")
     }
     for path in _fixture_paths(data_dir, "profiles"):
         catalog = load_profile_catalog(path)
@@ -221,7 +228,10 @@ def test_every_episode_has_ground_truth_for_its_frame_stream(data_dir: Path) -> 
 
 def test_ground_truth_targets_fall_inside_the_mission(data_dir: Path) -> None:
     """A target visible only after the path ends could never be found by any policy."""
-    paths = {spec.path_id: spec for spec in (load_path_spec(p) for p in _fixture_paths(data_dir, "paths"))}
+    paths = {
+        spec.path_id: spec
+        for spec in (load_path_spec(p) for p in _fixture_paths(data_dir, "paths"))
+    }
     episodes = [load_episode(path) for path in _fixture_paths(data_dir, "episodes")]
     shortest_mission_frames = min(
         int(paths[episode.path_id].length_m / episode.velocity_mps) for episode in episodes

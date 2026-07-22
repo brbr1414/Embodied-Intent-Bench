@@ -149,7 +149,5 @@ class EpisodeRecord:
         }
         if include_detail:
             payload["steps"] = [step.to_dict() for step in self.steps]
-            payload["evidence"] = (
-                self.evidence.to_dict() if self.evidence is not None else None
-            )
+            payload["evidence"] = self.evidence.to_dict() if self.evidence is not None else None
         return payload

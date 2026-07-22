@@ -147,11 +147,17 @@ def test_stepping_is_deterministic(state_manager: StateManager) -> None:
 # --- policy-visible projection --------------------------------------------------------
 
 
-def _runtime_state(manager: StateManager, state: SimulationState, synthetic_contract) -> RuntimeState:
-    return manager.build_runtime_state(state, contract=synthetic_contract, network=NETWORK, evidence_summary=SUMMARY)
+def _runtime_state(
+    manager: StateManager, state: SimulationState, synthetic_contract
+) -> RuntimeState:
+    return manager.build_runtime_state(
+        state, contract=synthetic_contract, network=NETWORK, evidence_summary=SUMMARY
+    )
 
 
-def test_runtime_state_reflects_internal_state(state_manager: StateManager, synthetic_contract) -> None:
+def test_runtime_state_reflects_internal_state(
+    state_manager: StateManager, synthetic_contract
+) -> None:
     state = state_manager.initial_state()
     for _ in range(25):
         state = _advance(state_manager, state, communication_mb=0.78)

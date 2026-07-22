@@ -127,9 +127,7 @@ def test_switches_are_counted_on_what_actually_ran(data, first_episode, contract
     assert adaptive.configuration_switch_count > 0
 
 
-def test_the_adaptation_log_is_recorded_without_being_scored(
-    data, first_episode, contract
-) -> None:
+def test_the_adaptation_log_is_recorded_without_being_scored(data, first_episode, contract) -> None:
     """Adaptation latency is not a V1 metric; the data to define it later is kept anyway."""
     record = run_episode(data=data, episode=first_episode, contract=contract).record
 
@@ -215,9 +213,7 @@ def test_the_rule_based_policy_beats_every_static_baseline(data, contract) -> No
             "rule_based",
         )
     }
-    assert rates["rule_based"] > max(
-        rate for name, rate in rates.items() if name != "rule_based"
-    )
+    assert rates["rule_based"] > max(rate for name, rate in rates.items() if name != "rule_based")
 
 
 def test_each_baseline_fails_for_its_own_reason(data, contract) -> None:

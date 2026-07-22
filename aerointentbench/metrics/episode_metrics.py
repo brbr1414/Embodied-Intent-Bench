@@ -135,9 +135,7 @@ def compute_episode_metrics(
 ) -> EpisodeMetrics:
     """Score one episode from its record and the task's verdict."""
     deadline = _at_most(record.final_time_s, contract.deadline_s, name="deadline")
-    battery = _at_least(
-        record.final_battery_frac, contract.min_final_battery_frac, name="battery"
-    )
+    battery = _at_least(record.final_battery_frac, contract.min_final_battery_frac, name="battery")
     communication = _at_most(
         record.cumulative_communication_mb, contract.communication_budget_mb, name="communication"
     )

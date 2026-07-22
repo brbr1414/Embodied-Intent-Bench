@@ -1,10 +1,18 @@
 # AeroIntentBench V1 specification
 
-Status: **scaffold committed, implementation in progress.** This document is the
-normative reference for V1. Where implementation and this document disagree, this
-document is the bug report.
+Status: **V1 complete and runnable.** This document is the normative reference. Where the
+implementation and this document disagree, this document is the bug report.
 
 > Every numeric value shown below is a **synthetic example**, not a measurement.
+
+| | |
+|---|---|
+| §1–3 | What the benchmark evaluates, its scope, and the decision loop |
+| §4 | Every schema, and the fixtures that instantiate them |
+| §5–9 | Action validation, timing, remote inference, battery, termination |
+| §10 | Metrics |
+| §11–13 | Why the fixtures are sized as they are, what the baselines score, result files |
+| §14–17 | Versioning, assumptions, known limitations, the milestone |
 
 ## 1. What the benchmark evaluates
 
@@ -72,7 +80,7 @@ Per decision step, in order:
 Every specification and result file carries `"schema_version": "1.0"`. V1 supports that
 value only; any other value fails loading with a clear validation error. Validation is
 strict — unknown fields are rejected rather than ignored, so a misspelling can never
-read as an intentional default. See §11 for where migrations would go.
+read as an intentional default. See §14 for where migrations would go.
 
 ### 4.1 Contract — *what must be achieved*
 
@@ -242,7 +250,7 @@ configuration's end-to-end latency: transfer and RTT depend on the network at th
 execution, so the executor adds them. `onboard_energy_j` is energy drawn from the vehicle
 battery: full inference locally, the smaller capture-and-encode cost remotely.
 
-### Remote must not be a dominated option
+#### Remote must not be a dominated option
 
 `CFG_REMOTE_STRONG` runs `SERVER_XL_INSTANCE_SEG` — a model the vehicle cannot host — and
 carries the **highest** quality tier. This matters for the benchmark to have a trade-off at
@@ -263,7 +271,7 @@ Remote is the best option while the link is good and becomes ruinous as it degra
 2 Mbps one inference spans more than six frame intervals. Deciding when to give it up is the
 adaptation the benchmark measures.
 
-### 4.6b Public profiles: what a policy is told
+### 4.7 Public profiles — *what a policy is told*
 
 Policies cannot infer quality from `config_id` — the architecture forbids parsing it, and
 `model_id` is equally off-limits. Without some channel, a policy could not reason about the
@@ -289,7 +297,7 @@ The middle ground is deliberate. Exact profiles would turn a benchmark about ada
 uncertainty into an offline planning exercise; nothing at all would make the quality
 constraint unreasonable-about.
 
-### 4.7 Platform profile
+### 4.8 Platform profile
 
 ```json
 {
@@ -302,7 +310,7 @@ constraint unreasonable-about.
 }
 ```
 
-### 4.8 Network trace
+### 4.9 Network trace
 
 Deterministic, segment-based, with `bandwidth_mbps`, `rtt_ms`, `packet_loss_frac`.
 At least three fixtures: **stable**, **degrading**, **disconnecting**.
@@ -327,7 +335,7 @@ undefined and an overlap would make it ambiguous; both are load errors rather th
 lookup-time surprises, because the benchmark's determinism depends on every time in the
 trace resolving to exactly one segment.
 
-### 4.9 Path specification
+### 4.10 Path specification
 
 The predefined path, reduced to the one property the loop consumes:
 
@@ -340,7 +348,7 @@ a flight model V1 does not have, and nothing in the decision loop would read the
 with the episode's fixed velocity, the length yields `path_progress`, which drives the
 primary termination condition.
 
-### 4.10 Privacy and transmitted payload
+### 4.11 Privacy and transmitted payload
 
 `local_only` and `remote_allowed` are decided by `strategy.placement` alone. `features_only`
 needs to know what a remote configuration puts on the wire, which placement cannot express,
@@ -360,7 +368,7 @@ This lives in `parameters` rather than as a typed strategy field because only th
 rule reads it. It graduates to a typed field if the core starts reasoning about it more
 broadly.
 
-### 4.11 Ground truth and synthetic predictions
+### 4.12 Ground truth and synthetic predictions
 
 Ground truth is keyed on the **frame stream**, not the episode: several episodes may fly the
 same scene under different battery, network, or contract conditions and must be scored
@@ -410,7 +418,7 @@ The IoU range **straddles the 0.50 matching threshold** on purpose: a weak confi
 see a person and still fail to segment them well enough to count. Detecting and matching are
 separate events.
 
-### 4.11b Two deduplications, deliberately different
+### 4.13 Two deduplications, deliberately different
 
 Both the policy summary and the evaluator count "unique targets", and they count different
 things:
@@ -425,7 +433,7 @@ Scoring is per unique target, not per instance: a target counts as found if *any
 matched it, and a predicted identity is a false positive if *none* of its instances matched
 anything. Sixty sightings of one person are one find.
 
-### 4.11c Measured discrimination (synthetic fixtures)
+### 4.14 Measured discrimination
 
 Running the full 900 s `EPISODE_001` under static strategies:
 
@@ -452,7 +460,7 @@ adaptation. Whether to raise it so that only adaptive policies pass is a **calib
 deferred to `feature/v1-policies`**, when real policies exist to calibrate against; tuning
 difficulty against hand-written strategy stubs would be fitting the benchmark to its own probe.
 
-### 4.12 Shipped fixtures
+### 4.15 Shipped fixtures
 
 | File | Contents |
 |---|---|
@@ -636,7 +644,7 @@ later — network-change event timestamps, battery-threshold event timestamps, s
 config history, execution result history. A placeholder utility is permitted; it must not
 block core V1.
 
-## 10b. Mission scale, and what each constraint actually binds
+## 11. Mission scale, and what each constraint actually binds
 
 The V1 mission is **900 s (15 min) over 4500 m at 5 m/s**, against a 960 s deadline, a
 400 MB communication budget, and a 20 % battery reserve. Those magnitudes are chosen, not
@@ -686,7 +694,7 @@ by flight alone (flight energy is not policy-controllable, so it must never deci
 outcome), and the path must be flyable inside every deadline (path completion has to be a
 reachable outcome).
 
-## 10c. Baseline policies and measured difficulty
+## 12. Baseline policies and measured difficulty
 
 V1 ships four baselines. None is claimed to be optimal; they exist so that a learned or
 optimisation-based policy has something meaningful to beat.
@@ -731,17 +739,17 @@ Two caveats:
   merely separate adaptive from static.
 - **Profile-blind runs collapse to 0 %.** Without a quality tier a policy genuinely cannot
   tell configurations apart, so it falls back to catalog order. That is the honest cost of
-  hiding profiles, and the measured justification for disclosing an ordinal tier (§4.6b).
+  hiding profiles, and the measured justification for disclosing an ordinal tier (§4.7).
 
 ### A fixture invariant this exposed
 
 `EPISODE_003` originally allowed only `CFG_LOCAL_LIGHT` and `CFG_REMOTE_STRONG`, and **no
 policy could pass it** — light never reached the threshold and remote could not stay inside
 the budget. An episode nothing can pass measures nothing, exactly as an episode doomed on
-battery by flight alone would (§10b). `CFG_LOCAL_STRONG` was added to its pool, after which
+battery by flight alone would (§11). `CFG_LOCAL_STRONG` was added to its pool, after which
 `rule_based` (0.872) beats `always_local_strong` (0.842) there.
 
-## 10d. Result files
+## 13. Result files
 
 A result file carries `schema_version` like every other document:
 
@@ -771,7 +779,7 @@ The record retains an `adaptation_log` that **no V1 metric consumes**: network-c
 timestamps, battery-threshold crossings, and the full configuration selection history. It is
 kept so adaptation latency can be defined and computed later without rerunning a campaign.
 
-## 11. Versioning and dependency policy
+## 14. Versioning and dependency policy
 
 **Dependencies.** V1 declares **zero runtime dependencies**; `pytest` is the only dev
 dependency. Schemas use stdlib `dataclasses` with centralised validation rather than a
@@ -784,7 +792,7 @@ update tests, document the change — and never silently reinterpret an old fiel
 Migration support belongs in `aerointentbench/schemas/loading.py`; it is documented, not
 implemented, in V1.
 
-## 12. Explicit V1 assumptions
+## 15. Explicit V1 assumptions
 
 These are implementation choices, not universal truths. They live in configuration or
 documented defaults, never as unexplained magic constants.
@@ -796,12 +804,39 @@ documented defaults, never as unexplained magic constants.
 | Zero switching latency and energy | All configs assumed preloaded |
 | Fixed power mode per episode | Power-mode selection is a future strategy dimension |
 | Predefined path, no flight dynamics | The benchmark evaluates configuration choice, not control |
-| 900 s mission, battery reserve as a guard | Flight power dominates compute by 15–60×, so battery cannot discriminate; the length exists to make it a *live observation* (§10b) |
+| 900 s mission, battery reserve as a guard | Flight power dominates compute by 15–60×, so battery cannot discriminate; the length exists to make it a *live observation* (§11) |
 | Hard constraints only | Soft/weighted constraints are a future contract extension |
 | Packet loss recorded, not modelled | No retransmission model is justified yet |
 
-## 13. Milestone
+## 16. Known limitations
+
+Recorded rather than hidden. None blocks the V1 milestone; each is a candidate for the next
+version.
+
+| Limitation | Detail |
+|---|---|
+| **`initial_altitude_m` has no consumer** | The episode schema carries it and nothing reads it. In a realistic benchmark altitude would drive ground sample distance and therefore detection difficulty — 40 m and 100 m give very different mask sizes. Today it is decorative, and should either be wired into the synthetic prediction model or removed. |
+| **The quality score is quantised** | Twenty ground-truth targets means recall moves in steps of 0.05. Adequate for separating adaptive from static policies; too coarse to rank policies finely. More targets would smooth it. |
+| **`rule_based` sweeps the suite** | At 100 % Mission Success Rate over three episodes there is no headroom above the reference heuristic. A larger episode suite is needed before the primary metric can rank policies rather than merely separate them. |
+| **The battery reserve does not discriminate** | Flight power dominates on-board compute by 15–60×, so no policy can move the final battery fraction much. It is a live observation and a guard, not a scoring axis (§11). |
+| **Adaptation latency is unimplemented** | "Appropriately adapted" is not formally defined, so no metric is computed. The data to compute one later is logged (§13). |
+| **Switching is free** | Zero latency and zero energy, all configurations assumed preloaded. Real model swapping costs both. |
+| **Packet loss is inert** | Recorded in the step log; no retransmission or corruption model. |
+| **One catalog per data root** | Selecting among several configuration catalogs is not specified. |
+| **`features_only` is untested end to end** | The rule is implemented and unit-tested, but no shipped episode exercises it, because no shipped configuration declares a feature payload. |
+
+## 17. Milestone
 
 V1 is done when: JSON inputs → deterministic 1-second decision loop → policy selects a
 config → profile-based executor produces results → state and evidence update → episode
 terminates → metrics JSON is generated. Nothing beyond that milestone is in scope.
+
+**Reached.** `python -m aerointentbench.run_benchmark --suite --contract
+data/contracts/contract_001.json --policy rule_based` runs three 900-step episodes and
+writes a metrics file, on CPU, with no runtime dependencies. Re-running produces a
+byte-identical result.
+
+The suite is pinned in `tests/reference/baseline_results.json`: every baseline's score on
+the shipped fixtures, compared on every test run. A change to a fixture, a profile, the
+prediction model, the evaluator, or a policy surfaces there as a diff, so the benchmark
+cannot move without someone approving the move.

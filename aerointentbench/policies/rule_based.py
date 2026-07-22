@@ -17,7 +17,7 @@ standing decides.
    candidates -- quality is worthless if the contract's deadline fails.
 5. **Battery pressure.** Near the required reserve, prefer the fastest candidate. Latency is
    a proxy here: public profiles disclose no energy, and a longer inference means more time
-   airborne. Weak, and deliberately so -- see docs/v1_spec.md §10b on why battery is a guard.
+   airborne. Weak, and deliberately so -- see docs/v1_spec.md §11 on why battery is a guard.
 6. **Latency budget.** Drop candidates whose estimated latency exceeds a multiple of the
    decision interval, *if any candidate survives*. This is what makes the policy abandon a
    remote configuration as bandwidth collapses: at 2 Mbps one upload spans six frames, and
@@ -37,7 +37,7 @@ from typing import Final
 
 from aerointentbench.policies.base import estimated_latency_s
 from aerointentbench.schemas.configuration import ConfigCatalog, Configuration, Placement
-from aerointentbench.schemas.contract import Contract, PrivacyLevel
+from aerointentbench.schemas.contract import Contract
 from aerointentbench.schemas.profile import PublicProfileView, QualityTier
 from aerointentbench.schemas.runtime_state import RuntimeState
 from aerointentbench.simulator.action_validator import privacy_permits
@@ -75,7 +75,9 @@ class RuleBasedPolicy:
         public_profiles: PublicProfileView | None = None,
         settings: RuleBasedSettings | None = None,
     ) -> None:
-        self._profiles = public_profiles if public_profiles is not None else PublicProfileView.hidden()
+        self._profiles = (
+            public_profiles if public_profiles is not None else PublicProfileView.hidden()
+        )
         self._settings = settings or RuleBasedSettings()
 
     def select_config(
@@ -105,7 +107,9 @@ class RuleBasedPolicy:
 
     # -- filters ----------------------------------------------------------------------
 
-    def _reachable(self, candidates: list[Configuration], state: RuntimeState) -> list[Configuration]:
+    def _reachable(
+        self, candidates: list[Configuration], state: RuntimeState
+    ) -> list[Configuration]:
         if not state.network.is_disconnected:
             return candidates
         return [c for c in candidates if c.strategy.placement is Placement.LOCAL]
@@ -136,7 +140,9 @@ class RuleBasedPolicy:
         ceiling = self._settings.max_latency_intervals * self._settings.decision_interval_s
         within = []
         for config in candidates:
-            latency = estimated_latency_s(config, self._profiles.get(config.config_id), state.network)
+            latency = estimated_latency_s(
+                config, self._profiles.get(config.config_id), state.network
+            )
             if latency is None or latency <= ceiling:
                 within.append(config)
         return within

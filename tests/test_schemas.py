@@ -208,9 +208,7 @@ def test_strategy_parameters_default_to_empty_and_accept_future_dimensions(
     ("placement", "precision"),
     [("sideways", "fp16"), ("local", "fp8")],
 )
-def test_catalog_rejects_unknown_strategy_enums(
-    write_json, placement: str, precision: str
-) -> None:
+def test_catalog_rejects_unknown_strategy_enums(write_json, placement: str, precision: str) -> None:
     payload = {
         "schema_version": "1.0",
         "configs": [
@@ -249,9 +247,7 @@ def test_platform_power_mode_check(data_dir: Path) -> None:
 
 
 def test_network_trace_fixture_loads(data_dir: Path) -> None:
-    trace = load_network_trace(
-        data_dir / "network_traces" / "synthetic_network_degrading_001.json"
-    )
+    trace = load_network_trace(data_dir / "network_traces" / "synthetic_network_degrading_001.json")
     assert trace.trace_id == "NETWORK_DEGRADING_001"
     assert len(trace.segments) == 3
     assert (trace.start_s, trace.end_s) == (0.0, 960.0)

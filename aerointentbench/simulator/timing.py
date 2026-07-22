@@ -29,7 +29,7 @@ __all__ = [
     "frames_skipped",
 ]
 
-#: One policy decision per second (V1 assumption; see docs/v1_spec.md §12).
+#: One policy decision per second (V1 assumption; see docs/v1_spec.md §15).
 DEFAULT_DECISION_INTERVAL_S: Final = 1.0
 
 #: Nominal one-frame-per-second stream (V1 assumption).

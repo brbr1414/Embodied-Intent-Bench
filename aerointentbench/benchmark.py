@@ -42,9 +42,9 @@ from aerointentbench.simulator.action_validator import (
     DEFAULT_SAFE_FALLBACK_CONFIG_ID,
     ActionValidator,
 )
-from aerointentbench.simulator.battery_model import SimpleBatteryModel
+from aerointentbench.simulator.battery_model import BatteryModel, SimpleBatteryModel
 from aerointentbench.simulator.episode_runner import EpisodeRunner
-from aerointentbench.simulator.network_trace import TraceBasedNetworkModel
+from aerointentbench.simulator.network_trace import NetworkModel, TraceBasedNetworkModel
 from aerointentbench.simulator.path import ConstantVelocityPath
 from aerointentbench.simulator.records import EpisodeRecord
 from aerointentbench.simulator.state_manager import StateManager
@@ -124,7 +124,8 @@ class BenchmarkData:
         }
         self._paths = {spec.path_id: spec for spec in _load_all(root / "paths", load_path_spec)}
         self._traces = {
-            trace.trace_id: trace for trace in _load_all(root / "network_traces", load_network_trace)
+            trace.trace_id: trace
+            for trace in _load_all(root / "network_traces", load_network_trace)
         }
         self._task_specs = {
             spec.task_id: spec for spec in _load_all(root / "task_specs", load_task_spec)
@@ -174,6 +175,8 @@ def run_episode(
     policy: Policy | None = None,
     executor: Executor | None = None,
     executor_name: str = "profile",
+    battery_model: BatteryModel | None = None,
+    network_model: NetworkModel | None = None,
     disclose_profiles: bool = True,
     fallback_config_id: str = DEFAULT_SAFE_FALLBACK_CONFIG_ID,
 ) -> EpisodeResult:
@@ -185,6 +188,10 @@ def run_episode(
         policy: A constructed policy, overriding ``policy_name``. Lets an external policy be
             evaluated without registering it.
         executor: A constructed executor, overriding the default profile-driven one.
+        battery_model: Overrides ``SimpleBatteryModel``. The seam a recorded-discharge or
+            electrochemical model plugs into.
+        network_model: Overrides the trace-based model. The seam an external simulator
+            adapter plugs into, since it is where "what the link is doing" comes from.
     """
     platform = data.platform(episode.platform_id)
     profiles = data.profiles(episode.platform_id)
@@ -207,11 +214,17 @@ def run_episode(
             episode.frame_stream_id,
         )
 
-    resolved_policy = policy if policy is not None else _build_policy(
-        policy_name, profiles, disclose_profiles=disclose_profiles
+    resolved_policy = (
+        policy
+        if policy is not None
+        else _build_policy(policy_name, profiles, disclose_profiles=disclose_profiles)
     )
-    resolved_executor = executor if executor is not None else ProfileExecutor(
-        profiles, predictions=task.create_prediction_source(ground_truth, profiles)
+    resolved_executor = (
+        executor
+        if executor is not None
+        else ProfileExecutor(
+            profiles, predictions=task.create_prediction_source(ground_truth, profiles)
+        )
     )
 
     runner = EpisodeRunner(
@@ -224,9 +237,13 @@ def run_episode(
             path=ConstantVelocityPath.from_spec(
                 data.path(episode.path_id), velocity_mps=episode.velocity_mps
             ),
-            battery_model=SimpleBatteryModel(),
+            battery_model=battery_model if battery_model is not None else SimpleBatteryModel(),
         ),
-        network_model=TraceBasedNetworkModel(data.trace(episode.network_trace_id)),
+        network_model=(
+            network_model
+            if network_model is not None
+            else TraceBasedNetworkModel(data.trace(episode.network_trace_id))
+        ),
         executor=resolved_executor,
         policy=resolved_policy,
         evidence_tracker=task.create_tracker(),
@@ -276,9 +293,7 @@ def run_suite(
     )
 
 
-def _build_policy(
-    policy_name: str, profiles: ProfileCatalog, *, disclose_profiles: bool
-) -> Policy:
+def _build_policy(policy_name: str, profiles: ProfileCatalog, *, disclose_profiles: bool) -> Policy:
     view = profiles.public_view() if disclose_profiles else PublicProfileView.hidden()
     try:
         return policy_registry.create(policy_name, public_profiles=view)

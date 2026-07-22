@@ -102,7 +102,8 @@ class TierBehaviour:
 
 
 #: Synthetic behaviour per tier. Placeholder values, chosen so that the tiers separate on
-#: short-visibility targets rather than on every frame; see docs/v1_spec.md §4.12.
+#: short-visibility targets rather than on every frame. See docs/v1_spec.md §4.12,
+#: 'Ground truth and synthetic predictions'.
 DEFAULT_TIER_BEHAVIOUR: Final[Mapping[QualityTier, TierBehaviour]] = {
     QualityTier.LOW: TierBehaviour(
         detection_probability=0.55,

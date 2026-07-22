@@ -54,9 +54,7 @@ class HumanSearchSegmentationTask:
     def create_evaluator(self) -> HumanSearchSegmentationEvaluator:
         return HumanSearchSegmentationEvaluator(self._task_spec)
 
-    def load_ground_truth(
-        self, directory: Path, episode: Episode
-    ) -> HumanSearchGroundTruth | None:
+    def load_ground_truth(self, directory: Path, episode: Episode) -> HumanSearchGroundTruth | None:
         """Find the answers for this episode's *frame stream*.
 
         Keyed on the stream, not the episode, so several episodes flying the same scene under

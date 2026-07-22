@@ -35,7 +35,6 @@ from aerointentbench.simulator.state_manager import SimulationState, StateManage
 from aerointentbench.simulator.termination import (
     DEFAULT_TERMINATION_CONDITIONS,
     TerminationCondition,
-    TerminationReason,
     first_triggered,
 )
 from aerointentbench.simulator.timing import frames_skipped
@@ -225,7 +224,7 @@ class EpisodeRunner:
         """
         try:
             return self._policy.select_config(self._contract, observation, self._allowed_configs)
-        except Exception as error:  # noqa: BLE001 - a policy is untrusted input
+        except Exception as error:
             _LOGGER.warning(
                 "policy %s raised %s; treating as an invalid action",
                 self._policy_name,
@@ -246,9 +245,7 @@ class _PolicyFailure:
         return f"<policy raised {self.error.__class__.__name__}: {self.error}>"
 
 
-def _crossed_thresholds(
-    before: float, after: float, state: SimulationState
-) -> list[float]:
+def _crossed_thresholds(before: float, after: float, state: SimulationState) -> list[float]:
     return [
         state.current_time_s
         for threshold in _BATTERY_EVENT_THRESHOLDS

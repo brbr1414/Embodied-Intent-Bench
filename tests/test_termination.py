@@ -32,7 +32,9 @@ def _at(state: SimulationState, **overrides) -> SimulationState:
 
 
 def test_a_fresh_episode_does_not_terminate(running_state, synthetic_contract) -> None:
-    assert first_triggered(DEFAULT_TERMINATION_CONDITIONS, running_state, synthetic_contract) is None
+    assert (
+        first_triggered(DEFAULT_TERMINATION_CONDITIONS, running_state, synthetic_contract) is None
+    )
 
 
 @pytest.mark.parametrize(
@@ -40,7 +42,10 @@ def test_a_fresh_episode_does_not_terminate(running_state, synthetic_contract) -
     [(0.99, None), (1.0, TerminationReason.PATH_COMPLETE), (1.5, TerminationReason.PATH_COMPLETE)],
 )
 def test_path_completion(running_state, synthetic_contract, progress: float, expected) -> None:
-    assert PathComplete().check(_at(running_state, path_progress=progress), synthetic_contract) == expected
+    assert (
+        PathComplete().check(_at(running_state, path_progress=progress), synthetic_contract)
+        == expected
+    )
 
 
 @pytest.mark.parametrize(
@@ -55,7 +60,10 @@ def test_path_completion(running_state, synthetic_contract, progress: float, exp
 def test_deadline_is_exceeded_only_strictly_past_it(
     running_state, synthetic_contract, time_s: float, expected
 ) -> None:
-    assert DeadlineExceeded().check(_at(running_state, current_time_s=time_s), synthetic_contract) == expected
+    assert (
+        DeadlineExceeded().check(_at(running_state, current_time_s=time_s), synthetic_contract)
+        == expected
+    )
 
 
 @pytest.mark.parametrize(
@@ -98,11 +106,15 @@ def test_deadline_is_reported_before_battery(running_state, synthetic_contract) 
 
 def test_termination_is_deterministic(running_state, synthetic_contract) -> None:
     state = _at(running_state, path_progress=1.0)
-    reasons = {first_triggered(DEFAULT_TERMINATION_CONDITIONS, state, synthetic_contract) for _ in range(5)}
+    reasons = {
+        first_triggered(DEFAULT_TERMINATION_CONDITIONS, state, synthetic_contract) for _ in range(5)
+    }
     assert reasons == {TerminationReason.PATH_COMPLETE}
 
 
-def test_conditions_are_composable_without_changing_the_core(running_state, synthetic_contract) -> None:
+def test_conditions_are_composable_without_changing_the_core(
+    running_state, synthetic_contract
+) -> None:
     """A new condition is an addition, not another branch in the runner."""
 
     class AlwaysStop:

@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from aerointentbench.executor import ExecutionRequest, ExecutionResult, FailureReason
-from aerointentbench.schemas import NetworkObservation, QualityTier, SchemaValidationError
+from aerointentbench.schemas import NetworkObservation, SchemaValidationError
 from aerointentbench.tasks.base import TaskEvaluationResult
 from aerointentbench.tasks.human_search_segmentation import (
     FramePrediction,
@@ -280,7 +280,9 @@ def test_the_two_deduplications_are_deliberately_different() -> None:
 
 def test_mean_confidence_is_over_instances() -> None:
     tracker = HumanSearchEvidenceTracker()
-    tracker.update(_success(_instance(confidence=0.6), _instance(predicted_target_id="PT_2", confidence=0.8)))
+    tracker.update(
+        _success(_instance(confidence=0.6), _instance(predicted_target_id="PT_2", confidence=0.8))
+    )
     assert tracker.policy_summary().mean_prediction_confidence == pytest.approx(0.7)
 
 
@@ -357,10 +359,10 @@ def test_a_false_positive_costs_precision_only(evaluator) -> None:
     assert scores.false_positive_targets == 1
 
 
-@pytest.mark.parametrize(
-    ("iou", "counts"), [(0.49, False), (0.50, True), (0.51, True)]
-)
-def test_matching_applies_the_task_rule_at_its_threshold(evaluator, iou: float, counts: bool) -> None:
+@pytest.mark.parametrize(("iou", "counts"), [(0.49, False), (0.50, True), (0.51, True)])
+def test_matching_applies_the_task_rule_at_its_threshold(
+    evaluator, iou: float, counts: bool
+) -> None:
     """Seeing a person is not the same as segmenting them well enough to count."""
     scores = evaluator.score(
         _record(_instance(predicted_target_id="PT_1", gt="GT_1", iou=iou)), _gt("GT_1")
@@ -379,10 +381,7 @@ def test_a_detection_that_fails_matching_is_a_false_positive(evaluator) -> None:
 
 def test_sixty_sightings_of_one_person_are_one_find(evaluator) -> None:
     record = _record(
-        *(
-            _instance(frame_id=frame, predicted_target_id="PT_1", gt="GT_1")
-            for frame in range(60)
-        ),
+        *(_instance(frame_id=frame, predicted_target_id="PT_1", gt="GT_1") for frame in range(60)),
         frames=60,
     )
     scores = evaluator.score(record, _gt("GT_1"))

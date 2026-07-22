@@ -287,7 +287,9 @@ class DocumentReader:
         readers: list[DocumentReader] = []
         for index, item in enumerate(value):
             if not isinstance(item, Mapping):
-                raise SchemaValidationError(f"{self._context}: field {key!r}[{index}] must be an object")
+                raise SchemaValidationError(
+                    f"{self._context}: field {key!r}[{index}] must be an object"
+                )
             readers.append(
                 DocumentReader(
                     item,

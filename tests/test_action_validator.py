@@ -210,7 +210,9 @@ def _local() -> Configuration:
         (PrivacyLevel.FEATURES_ONLY, _remote(TransmittedPayload.RAW_INPUT.value), False),
     ],
 )
-def test_privacy_rules(privacy: PrivacyLevel, configuration: Configuration, permitted: bool) -> None:
+def test_privacy_rules(
+    privacy: PrivacyLevel, configuration: Configuration, permitted: bool
+) -> None:
     assert privacy_permits(privacy, configuration) is permitted
 
 

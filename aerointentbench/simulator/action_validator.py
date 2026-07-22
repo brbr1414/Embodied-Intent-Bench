@@ -194,8 +194,7 @@ class ActionValidator:
         if not privacy_permits(self._privacy_level, self._catalog.get(config_id)):
             return (
                 ActionOutcome.PRIVACY_VIOLATION,
-                f"{config_id!r} is forbidden by privacy level "
-                f"{self._privacy_level.value!r}",
+                f"{config_id!r} is forbidden by privacy level {self._privacy_level.value!r}",
             )
         return None
 
