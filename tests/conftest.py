@@ -75,6 +75,14 @@ def catalog(data_dir: Path):
 
 
 @pytest.fixture
+def profiles(data_dir: Path):
+    """Synthetic per-configuration costs for UAV_PLATFORM_001."""
+    from aerointentbench.schemas import load_profile_catalog
+
+    return load_profile_catalog(data_dir / "profiles" / "synthetic_profiles_uav_platform_001.json")
+
+
+@pytest.fixture
 def episode(data_dir: Path):
     """EPISODE_001: 80 % battery, degrading network, no initial configuration."""
     from aerointentbench.schemas import load_episode

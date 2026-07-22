@@ -22,7 +22,7 @@
     },
     {
       "config_id": "CFG_REMOTE_STRONG",
-      "model_id": "STRONG_INSTANCE_SEG",
+      "model_id": "SERVER_XL_INSTANCE_SEG",
       "strategy": {
         "placement": "remote",
         "precision": "fp16",

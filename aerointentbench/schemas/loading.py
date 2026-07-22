@@ -156,9 +156,46 @@ class DocumentReader:
             )
         return number
 
+    def get_optional_float(
+        self,
+        key: str,
+        *,
+        default: float,
+        minimum: float | None = None,
+        maximum: float | None = None,
+    ) -> float:
+        """Read a float that may be absent or ``null``, falling back to ``default``.
+
+        Used only where the default is genuinely meaningful -- a local configuration
+        transmitting ``0.0`` megabytes, say -- never to paper over a missing required field.
+        """
+        if self._data.get(key) is None:
+            return default
+        return self.get_float(key, minimum=minimum, maximum=maximum)
+
+    def get_bool(self, key: str) -> bool:
+        value = self._require(key)
+        if not isinstance(value, bool):
+            raise SchemaValidationError(
+                f"{self._context}: field {key!r} must be a boolean, got {type(value).__name__}"
+            )
+        return value
+
     def get_fraction(self, key: str) -> float:
         """Read a float constrained to [0, 1]."""
         return self.get_float(key, minimum=0.0, maximum=1.0)
+
+    def get_passthrough(self, key: str) -> Any:
+        """Return a value unvalidated, for payloads whose shape this layer cannot know.
+
+        The one legitimate use is a task-specific prediction payload: an instance mask set
+        for human search, boxes for detection. The schema layer would have to grow a branch
+        per task to check them, which is exactly the coupling the architecture forbids, so
+        the task's evidence tracker validates its own payloads instead.
+
+        Not an escape hatch. Every field whose shape *is* known to this layer is validated.
+        """
+        return self._data.get(key)
 
     def get_enum(self, key: str, enum_type: type[_EnumT]) -> _EnumT:
         value = self.get_str(key)
@@ -203,6 +240,43 @@ class DocumentReader:
         return DocumentReader(
             value, context=f"{self._context}.{key}", allowed_fields=allowed_fields
         )
+
+    def get_id_keyed_object(
+        self, key: str, *, value_fields: Iterable[str]
+    ) -> list[tuple[str, DocumentReader]]:
+        """Read an object whose *keys* are identifiers rather than declared field names.
+
+        Used where a document maps IDs to records -- configuration profiles keyed by
+        ``config_id``, say. The key set cannot be validated, since any ID is legitimate,
+        but each value is validated strictly like any other nested object.
+
+        Returns ``(identifier, reader)`` pairs whose context names the key, so an error
+        inside one record still says which record.
+        """
+        value = self._require(key)
+        if not isinstance(value, Mapping):
+            raise SchemaValidationError(f"{self._context}: field {key!r} must be an object")
+        entries: list[tuple[str, DocumentReader]] = []
+        for identifier, record in value.items():
+            if not isinstance(identifier, str) or not identifier.strip():
+                raise SchemaValidationError(
+                    f"{self._context}: field {key!r} keys must be non-empty strings"
+                )
+            if not isinstance(record, Mapping):
+                raise SchemaValidationError(
+                    f"{self._context}: field {key!r}[{identifier!r}] must be an object"
+                )
+            entries.append(
+                (
+                    identifier,
+                    DocumentReader(
+                        record,
+                        context=f"{self._context}.{key}[{identifier!r}]",
+                        allowed_fields=value_fields,
+                    ),
+                )
+            )
+        return entries
 
     def get_object_list(self, key: str, *, allowed_fields: Iterable[str]) -> list[DocumentReader]:
         value = self._require(key)

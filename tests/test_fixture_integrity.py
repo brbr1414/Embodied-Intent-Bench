@@ -20,8 +20,10 @@ from aerointentbench.schemas import (
     load_network_trace,
     load_path_spec,
     load_platform_profile,
+    load_profile_catalog,
     load_task_spec,
 )
+from aerointentbench.executor import load_replay_records
 
 LOADERS_BY_DIRECTORY = {
     "contracts": load_contract,
@@ -31,6 +33,8 @@ LOADERS_BY_DIRECTORY = {
     "task_specs": load_task_spec,
     "network_traces": load_network_trace,
     "paths": load_path_spec,
+    "profiles": load_profile_catalog,
+    "predictions": load_replay_records,
 }
 
 
@@ -181,6 +185,28 @@ def test_the_mission_is_long_enough_for_battery_to_be_an_observation(data_dir: P
         )
 
 
+def test_every_selectable_configuration_is_profiled(data_dir: Path) -> None:
+    """A missing profile would surface on whichever step first selected that configuration."""
+    catalogs = [load_config_catalog(path) for path in _fixture_paths(data_dir, "configs")]
+    known_config_ids = {config_id for catalog in catalogs for config_id in catalog.ids()}
+
+    for path in _fixture_paths(data_dir, "profiles"):
+        profiles = load_profile_catalog(path)
+        assert set(profiles) <= known_config_ids, f"{path} profiles an unknown configuration"
+
+    platform_ids = {
+        load_platform_profile(path).platform_id
+        for path in _fixture_paths(data_dir, "platforms")
+    }
+    for path in _fixture_paths(data_dir, "profiles"):
+        catalog = load_profile_catalog(path)
+        assert catalog.platform_id in platform_ids, path
+        assert set(catalog) == known_config_ids, (
+            f"{path} does not profile every selectable configuration; "
+            f"missing {sorted(known_config_ids - set(catalog))}"
+        )
+
+
 def test_measurement_bearing_fixtures_are_marked_synthetic(data_dir: Path) -> None:
     """Profiles, traces, predictions, and ground truth carry invented numbers.
 
@@ -188,7 +214,7 @@ def test_measurement_bearing_fixtures_are_marked_synthetic(data_dir: Path) -> No
     mistaken for a measurement. Specification files (contracts, episodes, task specs,
     catalogs) state choices rather than measurements and are exempt.
     """
-    for directory in ("platforms", "network_traces"):
+    for directory in ("platforms", "network_traces", "profiles", "predictions"):
         for path in _fixture_paths(data_dir, directory):
             assert path.name.startswith("synthetic_"), (
                 f"{path} carries invented numbers and must be named synthetic_*"
