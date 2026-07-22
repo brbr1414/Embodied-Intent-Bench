@@ -44,9 +44,9 @@ constraint passes — quality, deadline, final battery, communication budget, an
 
 | | |
 |---|---|
-| Mission | Human search along a predefined UAV path |
+| Mission | Human search along a predefined UAV path, 900 s over 4500 m |
 | Task | `HUMAN_SEARCH_SEGMENTATION` (instance mask set, target F1) |
-| Decision interval | 1 second |
+| Decision interval | 1 second (900 decisions per episode) |
 | Action | One configuration ID from the allowed pool |
 | Configurations | Local and remote; typed `placement` / `precision` / `input_compression` |
 | Runtime variables | Battery, bandwidth, RTT, packet loss, remaining deadline, cumulative communication, path progress, evidence |

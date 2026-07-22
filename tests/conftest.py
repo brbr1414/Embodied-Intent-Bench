@@ -90,19 +90,63 @@ def path_spec(data_dir: Path):
     return load_path_spec(data_dir / "paths" / "path_001.json")
 
 
+# ---------------------------------------------------------------------------
+# Behaviour-test scale
+#
+# Tests of *behaviour* -- transitions, termination, timing -- use these round
+# numbers rather than the shipped fixtures. The shipped mission is 900 s over
+# 4500 m against a 960 s deadline, which turns every expected value into an
+# awkward fraction and, worse, means rescaling the benchmark rewrites tests that
+# have nothing to do with scale. A 50 s path against a 60 s deadline keeps the
+# arithmetic checkable by eye.
+#
+# That the *shipped* fixtures have the intended scale is asserted separately, in
+# test_fixture_integrity.py.
+# ---------------------------------------------------------------------------
+
+BEHAVIOUR_PATH_LENGTH_M = 250.0
+BEHAVIOUR_VELOCITY_MPS = 5.0  # => a 50 s path
+BEHAVIOUR_DEADLINE_S = 60.0
+
+
 @pytest.fixture
-def state_manager(episode, platform, path_spec):
-    """A state manager wired with the shipped fixtures and the simple battery model."""
+def synthetic_contract(contract):
+    """The example contract at behaviour-test scale: a 60 s deadline."""
+    import dataclasses
+
+    return dataclasses.replace(contract, deadline_s=BEHAVIOUR_DEADLINE_S)
+
+
+@pytest.fixture
+def make_state_manager(episode, platform):
+    """Factory for state managers at behaviour-test scale, with overridable parts."""
+    import dataclasses
+
     from aerointentbench.simulator.battery_model import SimpleBatteryModel
     from aerointentbench.simulator.path import ConstantVelocityPath
     from aerointentbench.simulator.state_manager import StateManager
 
-    return StateManager(
-        episode=episode,
-        platform=platform,
-        path=ConstantVelocityPath.from_spec(path_spec, velocity_mps=episode.velocity_mps),
-        battery_model=SimpleBatteryModel(),
-    )
+    def _make(
+        *,
+        path_length_m: float = BEHAVIOUR_PATH_LENGTH_M,
+        velocity_mps: float = BEHAVIOUR_VELOCITY_MPS,
+        battery_model: Any = None,
+        **episode_overrides: Any,
+    ):
+        return StateManager(
+            episode=dataclasses.replace(episode, **episode_overrides),
+            platform=platform,
+            path=ConstantVelocityPath(length_m=path_length_m, velocity_mps=velocity_mps),
+            battery_model=battery_model if battery_model is not None else SimpleBatteryModel(),
+        )
+
+    return _make
+
+
+@pytest.fixture
+def state_manager(make_state_manager):
+    """A state manager at behaviour-test scale, with the simple battery model."""
+    return make_state_manager()
 
 
 @pytest.fixture

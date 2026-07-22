@@ -100,8 +100,8 @@ All contract constraints are **hard** constraints in V1.
   "quality_metric": "target_f1",
   "quality_operator": ">=",
   "quality_threshold": 0.80,
-  "deadline_s": 60.0,
-  "communication_budget_mb": 50.0,
+  "deadline_s": 960.0,
+  "communication_budget_mb": 400.0,
   "min_final_battery_frac": 0.20,
   "privacy_level": "remote_allowed"
 }
@@ -157,16 +157,16 @@ current measurement.
 
 ```json
 {
-  "current_time_s": 25.0,
-  "frame_id": 25,
+  "current_time_s": 400.0,
+  "frame_id": 400,
   "battery_frac": 0.55,
   "power_mode": "15W",
   "network": { "bandwidth_mbps": 8.0, "rtt_ms": 70.0, "packet_loss_frac": 0.01 },
   "current_config_id": "CFG_REMOTE_STRONG",
-  "remaining_deadline_s": 35.0,
-  "cumulative_energy_j": 5250.0,
-  "cumulative_communication_mb": 19.5,
-  "path_progress": 0.42,
+  "remaining_deadline_s": 560.0,
+  "cumulative_energy_j": 73200.0,
+  "cumulative_communication_mb": 186.0,
+  "path_progress": 0.44,
   "evidence_summary": {
     "predicted_unique_targets": 3,
     "processed_frames": 20,
@@ -245,9 +245,9 @@ At least three fixtures: **stable**, **degrading**, **disconnecting**.
   "schema_version": "1.0",
   "trace_id": "NETWORK_DEGRADING_001",
   "segments": [
-    { "start_s": 0,  "end_s": 20, "bandwidth_mbps": 20.0, "rtt_ms": 30.0,  "packet_loss_frac": 0.0 },
-    { "start_s": 20, "end_s": 40, "bandwidth_mbps": 8.0,  "rtt_ms": 70.0,  "packet_loss_frac": 0.01 },
-    { "start_s": 40, "end_s": 60, "bandwidth_mbps": 2.0,  "rtt_ms": 150.0, "packet_loss_frac": 0.03 }
+    { "start_s": 0,   "end_s": 320, "bandwidth_mbps": 20.0, "rtt_ms": 30.0,  "packet_loss_frac": 0.0 },
+    { "start_s": 320, "end_s": 640, "bandwidth_mbps": 8.0,  "rtt_ms": 70.0,  "packet_loss_frac": 0.01 },
+    { "start_s": 640, "end_s": 960, "bandwidth_mbps": 2.0,  "rtt_ms": 150.0, "packet_loss_frac": 0.03 }
   ]
 }
 ```
@@ -265,7 +265,7 @@ trace resolving to exactly one segment.
 The predefined path, reduced to the one property the loop consumes:
 
 ```json
-{ "schema_version": "1.0", "path_id": "PATH_001", "length_m": 250.0, "description": "..." }
+{ "schema_version": "1.0", "path_id": "PATH_001", "length_m": 4500.0, "description": "..." }
 ```
 
 Waypoints, altitude profiles, and turn dynamics are deliberately absent — they would imply
@@ -303,7 +303,7 @@ broadly.
 | `data/configs/config_catalog_001.json` | The three-configuration V1 catalog |
 | `data/platforms/synthetic_uav_platform_001.json` | The example UAV platform |
 | `data/network_traces/synthetic_network_{stable,degrading,disconnecting}_001.json` | The three required conditions |
-| `data/paths/path_001.json` | The 250 m survey path (50 s at 5 m/s) |
+| `data/paths/path_001.json` | The 4500 m survey path (900 s at 5 m/s) |
 | `data/episodes/episode_00{1,2,3}*.json` | One episode per network condition |
 
 Files whose numbers are invented rather than chosen — platform profiles, network traces,
@@ -468,6 +468,56 @@ later — network-change event timestamps, battery-threshold event timestamps, s
 config history, execution result history. A placeholder utility is permitted; it must not
 block core V1.
 
+## 10b. Mission scale, and what each constraint actually binds
+
+The V1 mission is **900 s (15 min) over 4500 m at 5 m/s**, against a 960 s deadline, a
+400 MB communication budget, and a 20 % battery reserve. Those magnitudes are chosen, not
+arbitrary, and the reasoning is recorded here because it determines what the benchmark can
+and cannot measure.
+
+### Flight power dominates on-board compute
+
+On the example platform, per second of mission:
+
+| Configuration | Total | Flight | Compute + communication |
+|---|---:|---:|---:|
+| `CFG_LOCAL_LIGHT` | 183.00 J/s | 98.4 % | 1.6 % |
+| `CFG_LOCAL_STRONG` | 192.00 J/s | 93.8 % | 6.3 % |
+| `CFG_REMOTE_STRONG` | 181.78 J/s | 99.0 % | 1.0 % |
+
+The spread a policy can produce is **5.6 % of the consumption rate**, and it is a *ratio* —
+lengthening the mission scales flight and compute together and does not widen it. This is
+physical, not a modelling shortcut: a UAV draws hundreds of watts to stay airborne while a
+15 W accelerator spends single-digit joules per frame.
+
+**Consequence: the battery reserve is a guard, not a discriminating constraint.** Making it
+bind would require placing the mission inside a ~4.7 % window (1125–1180 s) where all-light
+passes and all-strong fails, which any change to the profile numbers would invalidate. That
+knife-edge was rejected.
+
+### What the mission length is actually for
+
+The battery is a **policy observation**, and an observation that does not move is useless.
+At the original 50 s scale the battery went 0.800 → 0.775 — a rule such as *"below 30 %,
+switch to the light configuration"* could never fire, so the benchmark could not distinguish
+a battery-aware policy from a battery-blind one. At 900 s it goes **0.800 → ~0.34**, visibly
+approaching the 0.20 reserve. A guard test enforces this span.
+
+### What each hard constraint does
+
+| Constraint | Status |
+|---|---|
+| **Quality** | **Binds.** The central trade-off: latency → dropped frames → missed targets. |
+| **Communication** | **Binds.** All-remote moves 1395 MB against a 400 MB budget, so remote is affordable for ~29 % of frames and must be rationed. |
+| **Deadline** | Weak. Path completion lands on the path's own duration; the deadline is missed only when the step straddling the path end overshoots it. |
+| **Battery** | **Guard, not discriminator.** Passes under every fixture and configuration; it moves enough to condition behaviour, but does not decide outcomes. |
+| **Privacy** | Binds where the contract restricts it (`contract_002_local_only`); blocked at validation and recorded. |
+
+Two fixture invariants follow, both enforced by tests: no episode may be doomed on battery
+by flight alone (flight energy is not policy-controllable, so it must never decide an
+outcome), and the path must be flyable inside every deadline (path completion has to be a
+reachable outcome).
+
 ## 11. Versioning and dependency policy
 
 **Dependencies.** V1 declares **zero runtime dependencies**; `pytest` is the only dev
@@ -493,6 +543,7 @@ documented defaults, never as unexplained magic constants.
 | Zero switching latency and energy | All configs assumed preloaded |
 | Fixed power mode per episode | Power-mode selection is a future strategy dimension |
 | Predefined path, no flight dynamics | The benchmark evaluates configuration choice, not control |
+| 900 s mission, battery reserve as a guard | Flight power dominates compute by 15–60×, so battery cannot discriminate; the length exists to make it a *live observation* (§10b) |
 | Hard constraints only | Soft/weighted constraints are a future contract extension |
 | Packet loss recorded, not modelled | No retransmission model is justified yet |
 

@@ -147,16 +147,16 @@ def test_stepping_is_deterministic(state_manager: StateManager) -> None:
 # --- policy-visible projection --------------------------------------------------------
 
 
-def _runtime_state(manager: StateManager, state: SimulationState, contract) -> RuntimeState:
-    return manager.build_runtime_state(state, contract=contract, network=NETWORK, evidence_summary=SUMMARY)
+def _runtime_state(manager: StateManager, state: SimulationState, synthetic_contract) -> RuntimeState:
+    return manager.build_runtime_state(state, contract=synthetic_contract, network=NETWORK, evidence_summary=SUMMARY)
 
 
-def test_runtime_state_reflects_internal_state(state_manager: StateManager, contract) -> None:
+def test_runtime_state_reflects_internal_state(state_manager: StateManager, synthetic_contract) -> None:
     state = state_manager.initial_state()
     for _ in range(25):
         state = _advance(state_manager, state, communication_mb=0.78)
 
-    observation = _runtime_state(state_manager, state, contract)
+    observation = _runtime_state(state_manager, state, synthetic_contract)
 
     assert observation.current_time_s == 25.0
     assert observation.frame_id == 25
@@ -168,35 +168,35 @@ def test_runtime_state_reflects_internal_state(state_manager: StateManager, cont
     assert observation.cumulative_energy_j == pytest.approx(state.cumulative_energy.total_j)
 
 
-def test_remaining_deadline_counts_down(state_manager: StateManager, contract) -> None:
+def test_remaining_deadline_counts_down(state_manager: StateManager, synthetic_contract) -> None:
     state = state_manager.initial_state()
     for _ in range(25):
         state = _advance(state_manager, state)
-    assert _runtime_state(state_manager, state, contract).remaining_deadline_s == 35.0
+    assert _runtime_state(state_manager, state, synthetic_contract).remaining_deadline_s == 35.0
 
 
-def test_remaining_deadline_clamps_at_zero(state_manager: StateManager, contract) -> None:
+def test_remaining_deadline_clamps_at_zero(state_manager: StateManager, synthetic_contract) -> None:
     """A negative "remaining" would be a nonsense reading; the overrun shows in the clock."""
     state = state_manager.initial_state()
     state = _advance(state_manager, state, inference_latency_s=90.0)
-    observation = _runtime_state(state_manager, state, contract)
+    observation = _runtime_state(state_manager, state, synthetic_contract)
     assert observation.current_time_s == 90.0
     assert observation.remaining_deadline_s == 0.0
 
 
 def test_the_observation_carries_no_simulator_handle(
-    state_manager: StateManager, contract
+    state_manager: StateManager, synthetic_contract
 ) -> None:
     """The policy gets a projection, not the simulator's own state object."""
     state = state_manager.initial_state()
-    observation = _runtime_state(state_manager, state, contract)
+    observation = _runtime_state(state_manager, state, synthetic_contract)
     assert isinstance(observation, RuntimeState)
     values = [getattr(observation, field.name) for field in dataclasses.fields(observation)]
     assert not any(isinstance(value, (SimulationState, StateManager)) for value in values)
 
 
-def test_the_observation_is_immutable(state_manager: StateManager, contract) -> None:
-    observation = _runtime_state(state_manager, state_manager.initial_state(), contract)
+def test_the_observation_is_immutable(state_manager: StateManager, synthetic_contract) -> None:
+    observation = _runtime_state(state_manager, state_manager.initial_state(), synthetic_contract)
     with pytest.raises(AttributeError):
         observation.battery_frac = 0.0  # type: ignore[misc]
 
