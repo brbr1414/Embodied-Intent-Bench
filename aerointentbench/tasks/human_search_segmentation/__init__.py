@@ -1,23 +1,68 @@
 """V1 task: ``HUMAN_SEARCH_SEGMENTATION``.
 
-Find unique people along a predefined UAV path and report an instance mask set. A
-target counts as found when a predicted instance matches a ground-truth instance under
-the task specification's matching rule (V1: ``mask_iou >= 0.50``), deduplicated by
-ground-truth track ID. Supported quality metrics: target precision, target recall,
-target F1.
+Find unique people along a predefined UAV path and report an instance mask set. A target
+counts as found when a predicted instance matches a ground-truth instance under the task
+specification's matching rule (V1: ``mask_iou >= 0.50``), deduplicated by ground-truth track
+ID. Supported quality metrics: target precision, target recall, target F1.
 
-Planned modules (added in ``feature/v1-human-search-task``)
------------------------------------------------------------
+Modules
+-------
+- ``ground_truth``     -- hidden targets and their visibility intervals.
+- ``prediction``       -- the predicted-instance payload and the synthetic prediction source.
 - ``evidence_tracker`` -- ``HumanSearchEvidenceTracker``: processed frames, accumulated
-                          predicted instances, deduplicated unique-target count,
-                          confidence summary, raw prediction references for the evaluator.
-- ``evaluator``        -- ``HumanSearchSegmentationEvaluator``: precision/recall/F1
-                          against hidden ground truth.
+                          instances, the policy summary, and the evaluator's record.
+- ``evaluator``        -- ``HumanSearchSegmentationEvaluator``: precision, recall, F1.
+- ``task``             -- binds the two together for the task registry.
 
 Boundaries
 ----------
-The tracker's ``policy_summary()`` must expose no ground-truth-derived quantity: no
-true recall, no hidden target count, no match outcome. Only ``final_record()``, consumed
-by the evaluator, may reference matched ground-truth track IDs -- and that record never
-reaches a policy.
+The tracker's ``policy_summary()`` exposes no ground-truth-derived quantity: no true recall,
+no hidden target count, no match outcome. Only ``final_record()``, consumed by the
+evaluator, references matched ground-truth track IDs -- and that record never reaches a
+policy.
+
+The two "unique target" counts are deliberately different. The policy sees distinct
+*predicted* identities, which a false positive inflates and which it cannot verify; the
+evaluator deduplicates by *ground-truth* track ID. Collapsing them would hand the policy its
+own true positive count.
 """
+
+from aerointentbench.tasks.human_search_segmentation.evaluator import (
+    HumanSearchSegmentationEvaluator,
+    QualityScores,
+)
+from aerointentbench.tasks.human_search_segmentation.evidence_tracker import (
+    HumanSearchEvidenceRecord,
+    HumanSearchEvidenceTracker,
+)
+from aerointentbench.tasks.human_search_segmentation.ground_truth import (
+    TASK_ID,
+    HumanSearchGroundTruth,
+    TargetTrack,
+    load_human_search_ground_truth,
+)
+from aerointentbench.tasks.human_search_segmentation.prediction import (
+    DEFAULT_TIER_BEHAVIOUR,
+    FramePrediction,
+    PredictedInstance,
+    SyntheticHumanSearchPredictions,
+    TierBehaviour,
+)
+from aerointentbench.tasks.human_search_segmentation.task import HumanSearchSegmentationTask
+
+__all__ = [
+    "DEFAULT_TIER_BEHAVIOUR",
+    "TASK_ID",
+    "FramePrediction",
+    "HumanSearchEvidenceRecord",
+    "HumanSearchEvidenceTracker",
+    "HumanSearchGroundTruth",
+    "HumanSearchSegmentationEvaluator",
+    "HumanSearchSegmentationTask",
+    "PredictedInstance",
+    "QualityScores",
+    "SyntheticHumanSearchPredictions",
+    "TargetTrack",
+    "TierBehaviour",
+    "load_human_search_ground_truth",
+]

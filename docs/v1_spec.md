@@ -360,7 +360,99 @@ This lives in `parameters` rather than as a typed strategy field because only th
 rule reads it. It graduates to a typed field if the core starts reasoning about it more
 broadly.
 
-### 4.11 Shipped fixtures
+### 4.11 Ground truth and synthetic predictions
+
+Ground truth is keyed on the **frame stream**, not the episode: several episodes may fly the
+same scene under different battery, network, or contract conditions and must be scored
+against the same answers. Each target is a track ID plus an inclusive visibility interval.
+
+```json
+{
+  "schema_version": "1.0",
+  "frame_stream_id": "STREAM_001",
+  "task_id": "HUMAN_SEARCH_SEGMENTATION",
+  "targets": [
+    { "track_id": "GT_L1",  "first_frame_id": 40,  "last_frame_id": 95 },
+    { "track_id": "GT_F01", "first_frame_id": 110, "last_frame_id": 110 }
+  ]
+}
+```
+
+**Visibility duration is what makes latency cost quality.** A target in view for one frame
+is missed outright by a configuration slow enough to skip it — at 2 Mbps a remote inference
+spans more than six frame intervals. Without fleeting targets every configuration would find
+everything and the benchmark would measure nothing, so the shipped stream carries 20 targets:
+4 sustained (~55 frames), 6 brief (~9), and 10 fleeting (1–2), spread across all three
+network segments.
+
+A predicted instance carries two kinds of field:
+
+| Field | Visibility |
+|---|---|
+| `prediction_id`, `frame_id`, `predicted_target_id`, `confidence` | aggregated into the policy summary |
+| `ground_truth_track_id`, `mask_iou` | **hidden**; evaluator only |
+
+The hidden pair stands in for real mask comparison — a production system would store a mask
+and compute IoU. The evaluator reads `mask_iou` through the task spec's matching rule, so
+replacing synthesis with real masks changes what fills the field, not what reads it.
+
+Synthesis is deterministic in `(seed, frame_id, config_id, track_id)`, hashed with
+`hashlib` rather than the builtin `hash`, whose string seed is randomised per process.
+Behaviour follows the configuration's `quality_tier`:
+
+| Tier | Detection probability | Mask IoU range | False positives / frame |
+|---|---:|---|---:|
+| low | 0.55 | 0.30 – 0.75 | 0.004 |
+| medium | 0.75 | 0.42 – 0.88 | 0.002 |
+| high | 0.92 | 0.48 – 0.96 | 0.001 |
+
+The IoU range **straddles the 0.50 matching threshold** on purpose: a weak configuration can
+see a person and still fail to segment them well enough to count. Detecting and matching are
+separate events.
+
+### 4.11b Two deduplications, deliberately different
+
+Both the policy summary and the evaluator count "unique targets", and they count different
+things:
+
+- The **policy** sees distinct `predicted_target_id`s — what the system believes it found. A
+  false positive inflates it, and the policy is given no way to discover that.
+- The **evaluator** deduplicates by `ground_truth_track_id`, per the task specification.
+
+Collapsing them would hand the policy its own true-positive count.
+
+Scoring is per unique target, not per instance: a target counts as found if *any* prediction
+matched it, and a predicted identity is a false positive if *none* of its instances matched
+anything. Sixty sightings of one person are one find.
+
+### 4.11c Measured discrimination (synthetic fixtures)
+
+Running the full 900 s `EPISODE_001` under static strategies:
+
+| Strategy | Frames | Found | Recall | Precision | F1 | Comms |
+|---|---:|---:|---:|---:|---:|---:|
+| always local-light (low) | 900 | 15/20 | 0.750 | 0.625 | 0.682 | 0 MB |
+| always local-strong (medium) | 900 | 16/20 | 0.800 | 0.941 | 0.865 | 0 MB |
+| always remote (high) | 548 | 18/20 | 0.900 | 0.947 | 0.923 | **849 MB — over budget** |
+| budget-rationed remote | 900 | 17/20 | 0.850 | 0.895 | 0.872 | 400 MB |
+
+Two properties this confirms, and one caveat:
+
+- **Quality tier moves recall**, which is the intended signal. An earlier fixture with longer
+  visibility windows saturated recall at 1.000 for every configuration, leaving false-positive
+  count as the only discriminator — which perversely rewarded processing *fewer* frames.
+- **All-remote is stopped by the communication budget**, not by quality. It scores best and
+  cannot afford to.
+- **Caveat: the score is quantised.** Twenty targets means recall moves in steps of 0.05, so
+  small differences between policies are not meaningful. That is adequate for V1's coarse
+  comparisons and would need more targets for fine ones.
+
+The current `contract_001` threshold of 0.80 is reachable by `always local-strong` without any
+adaptation. Whether to raise it so that only adaptive policies pass is a **calibration decision
+deferred to `feature/v1-policies`**, when real policies exist to calibrate against; tuning
+difficulty against hand-written strategy stubs would be fitting the benchmark to its own probe.
+
+### 4.12 Shipped fixtures
 
 | File | Contents |
 |---|---|
@@ -373,6 +465,7 @@ broadly.
 | `data/paths/path_001.json` | The 4500 m survey path (900 s at 5 m/s) |
 | `data/profiles/synthetic_profiles_uav_platform_001.json` | Per-configuration costs and quality tiers |
 | `data/predictions/synthetic_replay_example.json` | A four-record replay set exercising the replay backend |
+| `data/ground_truth/synthetic_human_search_stream_001.json` | 20 targets over STREAM_001: 4 sustained, 6 brief, 10 fleeting |
 | `data/episodes/episode_00{1,2,3}*.json` | One episode per network condition |
 
 Files whose numbers are invented rather than chosen — platform profiles, network traces,
