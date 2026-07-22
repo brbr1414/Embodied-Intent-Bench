@@ -110,6 +110,77 @@ def test_every_network_trace_covers_the_longest_contract_deadline(data_dir: Path
         assert trace.end_s >= longest_deadline, path
 
 
+def test_the_path_can_be_flown_within_every_deadline(data_dir: Path) -> None:
+    """Path completion must be a reachable outcome, not one the deadline pre-empts."""
+    velocities = {load_episode(path).velocity_mps for path in _fixture_paths(data_dir, "episodes")}
+    deadlines = [load_contract(path).deadline_s for path in _fixture_paths(data_dir, "contracts")]
+
+    for path in _fixture_paths(data_dir, "paths"):
+        spec = load_path_spec(path)
+        for velocity in velocities:
+            duration_s = spec.length_m / velocity
+            assert duration_s <= min(deadlines), (
+                f"{path} takes {duration_s:.0f} s at {velocity} m/s, past the tightest "
+                f"deadline of {min(deadlines):.0f} s"
+            )
+
+
+def test_no_episode_is_doomed_on_battery_by_flight_alone(data_dir: Path) -> None:
+    """Flight energy is not policy-controllable, so it must never decide the outcome.
+
+    If merely flying the path put an episode under a contract's reserve, that episode
+    would fail no matter what the policy selected, and would measure nothing.
+    """
+    platforms = {
+        profile.platform_id: profile
+        for profile in (
+            load_platform_profile(path) for path in _fixture_paths(data_dir, "platforms")
+        )
+    }
+    paths = {spec.path_id: spec for spec in (load_path_spec(p) for p in _fixture_paths(data_dir, "paths"))}
+    floors = [load_contract(path).min_final_battery_frac for path in _fixture_paths(data_dir, "contracts")]
+
+    for path in _fixture_paths(data_dir, "episodes"):
+        episode = load_episode(path)
+        platform = platforms[episode.platform_id]
+        duration_s = paths[episode.path_id].length_m / episode.velocity_mps
+        flight_frac = platform.flight_power_w * duration_s / platform.battery_capacity_j
+        remaining = episode.initial_battery_frac - flight_frac
+        assert remaining > max(floors), (
+            f"{path}: flight alone leaves {remaining:.3f}, at or below the strictest "
+            f"reserve {max(floors):.2f}; the episode could not be passed by any policy"
+        )
+
+
+def test_the_mission_is_long_enough_for_battery_to_be_an_observation(data_dir: Path) -> None:
+    """The battery must traverse a real span, or battery-aware policy logic is dead code.
+
+    At the original 50 s mission scale the battery moved by 0.025, so a rule such as
+    "below 30 %, switch to the light configuration" could never fire and the benchmark
+    could not tell a battery-aware policy from a battery-blind one. See docs/v1_spec.md
+    ("Mission scale").
+    """
+    minimum_span = 0.30
+
+    platforms = {
+        profile.platform_id: profile
+        for profile in (
+            load_platform_profile(path) for path in _fixture_paths(data_dir, "platforms")
+        )
+    }
+    paths = {spec.path_id: spec for spec in (load_path_spec(p) for p in _fixture_paths(data_dir, "paths"))}
+
+    for path in _fixture_paths(data_dir, "episodes"):
+        episode = load_episode(path)
+        platform = platforms[episode.platform_id]
+        duration_s = paths[episode.path_id].length_m / episode.velocity_mps
+        span = platform.flight_power_w * duration_s / platform.battery_capacity_j
+        assert span >= minimum_span, (
+            f"{path}: the battery only moves {span:.3f} over the mission; "
+            f"battery-conditioned behaviour would be untestable"
+        )
+
+
 def test_measurement_bearing_fixtures_are_marked_synthetic(data_dir: Path) -> None:
     """Profiles, traces, predictions, and ground truth carry invented numbers.
 

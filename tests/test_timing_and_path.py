@@ -72,16 +72,27 @@ def test_frames_skipped_never_reports_negative() -> None:
 
 
 @pytest.fixture
-def path(data_dir: Path) -> ConstantVelocityPath:
-    # 250 m at 5 m/s => 50 s.
-    return ConstantVelocityPath.from_spec(
-        load_path_spec(data_dir / "paths" / "path_001.json"), velocity_mps=5.0
-    )
+def path() -> ConstantVelocityPath:
+    """Behaviour-test scale: 250 m at 5 m/s => 50 s, checkable by eye.
+
+    Deliberately not the shipped 4500 m fixture. These tests are about the progress
+    *rule*, not the mission's size, and should not have to be rewritten when the
+    benchmark is rescaled. The shipped path's own dimensions are asserted in
+    test_fixture_integrity.py.
+    """
+    return ConstantVelocityPath(length_m=250.0, velocity_mps=5.0)
 
 
 def test_path_duration_follows_length_and_velocity(path: ConstantVelocityPath) -> None:
     assert path.length_m == 250.0
     assert path.duration_s == 50.0
+
+
+def test_from_spec_takes_its_length_from_the_specification(data_dir: Path) -> None:
+    spec = load_path_spec(data_dir / "paths" / "path_001.json")
+    built = ConstantVelocityPath.from_spec(spec, velocity_mps=5.0)
+    assert built.length_m == spec.length_m
+    assert built.duration_s == spec.length_m / 5.0
 
 
 @pytest.mark.parametrize(

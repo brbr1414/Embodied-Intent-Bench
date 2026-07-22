@@ -35,8 +35,8 @@ def test_contract_fixture_loads(data_dir: Path) -> None:
     assert contract.quality_metric == "target_f1"
     assert contract.quality_operator is ComparisonOperator.GREATER_EQUAL
     assert contract.quality_threshold == 0.80
-    assert contract.deadline_s == 60.0
-    assert contract.communication_budget_mb == 50.0
+    assert contract.deadline_s == 960.0
+    assert contract.communication_budget_mb == 400.0
     assert contract.min_final_battery_frac == 0.20
     assert contract.privacy_level is PrivacyLevel.REMOTE_ALLOWED
 
@@ -254,7 +254,7 @@ def test_network_trace_fixture_loads(data_dir: Path) -> None:
     )
     assert trace.trace_id == "NETWORK_DEGRADING_001"
     assert len(trace.segments) == 3
-    assert (trace.start_s, trace.end_s) == (0.0, 60.0)
+    assert (trace.start_s, trace.end_s) == (0.0, 960.0)
     assert trace.segments[0].observation.bandwidth_mbps == 20.0
     assert trace.segments[2].observation.rtt_ms == 150.0
 
