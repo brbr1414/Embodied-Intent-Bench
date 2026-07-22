@@ -42,6 +42,12 @@ On completing a branch, report:
 
 ## V1 branch sequence
 
+All complete. One branch was added that the original plan did not anticipate:
+`fix/v1-mission-scale`, which rescaled the mission from 50 s to 900 s after measurement
+showed the battery barely moved over an episode, making battery-conditioned policy logic
+untestable.
+
+
 | # | Branch | Responsibility |
 |---|---|---|
 | 1 | `feature/v1-spec-and-scaffold` | Repo inspection, docs, `CLAUDE.md`, package/test skeleton, packaging. No domain logic. |
@@ -55,6 +61,17 @@ On completing a branch, report:
 
 Each branch implements **only** its own row. Work is not to be consolidated into one
 large branch.
+
+### Where `EpisodeRunner` lands
+
+The loop itself is not in branch 3. It composes an `Executor` (branch 4), an
+`EvidenceTracker` (branch 5), and a `Policy` (branch 6), so writing it earlier would mean
+writing it against interfaces that do not exist yet and rewriting it three times.
+
+Branch 3 delivers the components the loop drives — state transition, network, battery,
+path, timing, termination, action validation — each independently tested. The runner that
+sequences them belongs at the **start of branch 7**, where every dependency exists and the
+composition root is being built anyway.
 
 ## Commit messages
 

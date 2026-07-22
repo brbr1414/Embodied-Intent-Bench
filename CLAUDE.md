@@ -23,9 +23,18 @@ are `aerointentbench` / AeroIntentBench.)
 
 ## Current status
 
-V1, in progress. See `docs/branching.md` for the branch sequence and which branch owns
-what. Branch 1 (`feature/v1-spec-and-scaffold`) established docs, packaging, and the
-package/test skeleton; domain logic lands in later branches.
+**V1 complete and runnable.** All eight branches in `docs/branching.md` are done. The
+benchmark runs three 900-step episodes on CPU with zero runtime dependencies and writes a
+metrics file; re-running produces a byte-identical result.
+
+Before changing anything, read `docs/v1_spec.md` §16 (known limitations) — several are
+deliberate and already decided, and re-litigating them wastes a session. The first one worth
+fixing is `initial_altitude_m`, which the episode schema carries and nothing reads.
+
+**`tests/reference/baseline_results.json` pins what every baseline scores.** If a change
+moves those numbers, that is the benchmark moving. Regenerate with
+`python -m tests.test_reference_suite --update` and review the diff deliberately; do not
+regenerate to make a test pass.
 
 ## Documents
 
@@ -89,8 +98,8 @@ invalidates the benchmark.
   Pydantic. `pytest` is the only dev dependency.
 - `pathlib` over `os.path`; stdlib `logging` (no bare `print` outside the CLI).
 - JSON-serialisable typed records; deterministic seeds; pure functions where practical.
-- `ruff` config lives in `pyproject.toml` (line length 100). It is not installed by
-  default — do not add it as a hard requirement.
+- `ruff` is a dev dependency and the codebase is clean under `ruff check` and
+  `ruff format --check` (line length 100). Keep it that way.
 - Docstrings state the module's **responsibility and boundaries**, not just its contents.
 
 ## Determinism
@@ -119,5 +128,13 @@ documentation. Never present them as hardware results.
 
 ```bash
 python -m venv .venv && .venv/bin/pip install -e ".[dev]"   # setup
-.venv/bin/pytest                                            # tests
+.venv/bin/pytest                                            # 454 tests
+.venv/bin/ruff check . && .venv/bin/ruff format --check .   # lint and format
+
+# run the benchmark
+.venv/bin/python -m aerointentbench.run_benchmark --suite \
+  --contract data/contracts/contract_001.json --policy rule_based
+
+# regenerate the pinned reference results (review the diff!)
+.venv/bin/python -m tests.test_reference_suite --update
 ```
