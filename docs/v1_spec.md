@@ -222,6 +222,73 @@ that subset, so a policy cannot select or even see a disallowed configuration.
 Configuration *identity* is separate from *measured or simulated performance*. These
 values are synthetic placeholders.
 
+The shipped schema uses one record shape for local and remote alike:
+
+```json
+{
+  "schema_version": "1.0",
+  "platform_id": "UAV_PLATFORM_001",
+  "profiles": {
+    "CFG_LOCAL_LIGHT":   { "compute_latency_ms": 100.0, "onboard_energy_j":  3.0, "upload_mb": 0.0, "download_mb": 0.00, "quality_tier": "low" },
+    "CFG_LOCAL_STRONG":  { "compute_latency_ms": 450.0, "onboard_energy_j": 12.0, "upload_mb": 0.0, "download_mb": 0.00, "quality_tier": "medium" },
+    "CFG_REMOTE_STRONG": { "compute_latency_ms": 100.0, "onboard_energy_j":  1.0, "upload_mb": 1.5, "download_mb": 0.05, "quality_tier": "high" }
+  }
+}
+```
+
+`compute_latency_ms` is time spent computing *wherever that happens* — on-vehicle inference
+for a local configuration, server-side inference for a remote one. It is **not** a remote
+configuration's end-to-end latency: transfer and RTT depend on the network at the moment of
+execution, so the executor adds them. `onboard_energy_j` is energy drawn from the vehicle
+battery: full inference locally, the smaller capture-and-encode cost remotely.
+
+### Remote must not be a dominated option
+
+`CFG_REMOTE_STRONG` runs `SERVER_XL_INSTANCE_SEG` — a model the vehicle cannot host — and
+carries the **highest** quality tier. This matters for the benchmark to have a trade-off at
+all: remote costs bandwidth and fails outright when the link drops, so if it were merely
+equal in quality to a local option no policy would ever rationally select it, and the
+communication budget would degenerate from a trade-off into a tax. A test enforces that
+remote out-ranks every local option.
+
+The resulting tension, using the shipped profiles:
+
+| Configuration | Quality | 20 Mbps | 8 Mbps | 2 Mbps | Disconnected |
+|---|---|---:|---:|---:|---|
+| `CFG_LOCAL_LIGHT` | low | 0.10 s | 0.10 s | 0.10 s | 0.10 s |
+| `CFG_LOCAL_STRONG` | medium | 0.45 s | 0.45 s | 0.45 s | 0.45 s |
+| `CFG_REMOTE_STRONG` | **high** | 0.75 s | 1.72 s | **6.45 s** | **fails** |
+
+Remote is the best option while the link is good and becomes ruinous as it degrades — at
+2 Mbps one inference spans more than six frame intervals. Deciding when to give it up is the
+adaptation the benchmark measures.
+
+### 4.6b Public profiles: what a policy is told
+
+Policies cannot infer quality from `config_id` — the architecture forbids parsing it, and
+`model_id` is equally off-limits. Without some channel, a policy could not reason about the
+quality constraint at all. The channel is an explicit, run-level setting:
+
+```python
+PublicProfile(config_id=..., expected_latency_ms=100.0, expected_upload_mb=1.5, quality_tier="high")
+```
+
+- **`quality_tier` is ordinal** (`low` / `medium` / `high`, with a `rank`), never a number.
+  A policy needs to know one configuration is more accurate than another; it must not get a
+  figure close enough to the true score to plan against.
+- **`expected_latency_ms` is compute time only.** A policy estimates a remote
+  configuration's end-to-end latency from the bandwidth it already observes, so it gains no
+  foresight about a network it has not yet seen.
+- **Exact energy is not disclosed.**
+
+`PublicProfileView.hidden()` supplies the profile-blind mode. A policy must treat an empty
+view as legitimate — whether profiles are public is a property of the run, and a policy that
+crashes without them is not a valid submission.
+
+The middle ground is deliberate. Exact profiles would turn a benchmark about adapting under
+uncertainty into an offline planning exercise; nothing at all would make the quality
+constraint unreasonable-about.
+
 ### 4.7 Platform profile
 
 ```json
@@ -304,6 +371,8 @@ broadly.
 | `data/platforms/synthetic_uav_platform_001.json` | The example UAV platform |
 | `data/network_traces/synthetic_network_{stable,degrading,disconnecting}_001.json` | The three required conditions |
 | `data/paths/path_001.json` | The 4500 m survey path (900 s at 5 m/s) |
+| `data/profiles/synthetic_profiles_uav_platform_001.json` | Per-configuration costs and quality tiers |
+| `data/predictions/synthetic_replay_example.json` | A four-record replay set exercising the replay backend |
 | `data/episodes/episode_00{1,2,3}*.json` | One episode per network condition |
 
 Files whose numbers are invented rather than chosen — platform profiles, network traces,
@@ -373,8 +442,14 @@ upload_time_s  = 8 * upload_size_mb / bandwidth_mbps      (same relation for dow
 ```
 
 If bandwidth is zero: the remote inference **fails**, produces no prediction, the failure
-is recorded, a configurable timeout is applied, and the episode continues unless another
-termination condition fires. A single failed remote inference never terminates an episode.
+is recorded, a configurable timeout is applied (default 2 s), and the episode continues
+unless another termination condition fires. A single failed remote inference never
+terminates an episode.
+
+A failed remote execution still charges `onboard_energy_j` — the vehicle captured and
+encoded the frame before discovering it could not send it — but counts **zero**
+communication, since nothing reached the server. Packet loss is recorded in the step log
+and applies no latency penalty: V1 models no retransmission.
 
 ## 8. Battery
 

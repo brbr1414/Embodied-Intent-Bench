@@ -17,6 +17,8 @@ Modules
 - ``task_spec``     -- task definition: evidence type, matching rule, deduplication.
 - ``network_trace`` -- trace data and the single observation a policy may see.
 - ``path``          -- the predefined path, reduced to the length the loop consumes.
+- ``profile``       -- per-platform configuration costs, and the public view of them
+                       that a policy may be shown.
 - ``runtime_state`` -- the policy-visible observation built fresh at every decision step.
 - ``loading``       -- schema-version gate, field validation, and the seam a future
                        migration layer hooks into.
@@ -57,6 +59,15 @@ from aerointentbench.schemas.network_trace import (
     load_network_trace,
 )
 from aerointentbench.schemas.path import PathSpec, load_path_spec
+from aerointentbench.schemas.profile import (
+    ConfigurationProfile,
+    ProfileCatalog,
+    PublicProfile,
+    PublicProfileView,
+    QualityTier,
+    check_catalog_is_profiled,
+    load_profile_catalog,
+)
 from aerointentbench.schemas.platform import (
     PlatformProfile,
     check_episode_power_mode,
@@ -73,10 +84,10 @@ from aerointentbench.schemas.task_spec import (
 )
 
 __all__ = [
-    "SUPPORTED_SCHEMA_VERSIONS",
     "ComparisonOperator",
     "ConfigCatalog",
     "Configuration",
+    "ConfigurationProfile",
     "Contract",
     "DeduplicationMethod",
     "DeduplicationRule",
@@ -91,11 +102,17 @@ __all__ = [
     "PlatformProfile",
     "Precision",
     "PrivacyLevel",
+    "ProfileCatalog",
+    "PublicProfile",
+    "PublicProfileView",
+    "QualityTier",
     "RuntimeState",
+    "SUPPORTED_SCHEMA_VERSIONS",
     "SchemaValidationError",
     "SchemaVersionError",
     "Strategy",
     "TaskSpec",
+    "check_catalog_is_profiled",
     "check_contract_is_supported",
     "check_episode_power_mode",
     "load_config_catalog",
@@ -104,5 +121,6 @@ __all__ = [
     "load_network_trace",
     "load_path_spec",
     "load_platform_profile",
+    "load_profile_catalog",
     "load_task_spec",
 ]
