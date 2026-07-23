@@ -22,7 +22,7 @@ control, or open-ended language understanding.
 → state and evidence updates → termination → metrics JSON. Runs on CPU with **zero runtime
 dependencies**; re-running produces a byte-identical result.
 
-557 tests, clean under `ruff check` and `ruff format`. Known limitations are recorded in
+574 tests, clean under `ruff check` and `ruff format`. Known limitations are recorded in
 [`docs/v1_spec.md`](docs/v1_spec.md) §16 rather than left implicit.
 
 ## The loop
@@ -228,6 +228,22 @@ provenance field (`--created-at` pins it). Every generated file's SHA-256 is rec
 `provenance.json`. The committed source fixture under `data/examples/empirical_source/` is
 **synthetic and tests conversion correctness only** — no model, no dataset.
 
+### Real-segmentation pilot (tooling only — no real run yet)
+
+[`experiments/real_segmentation_pilot/`](experiments/real_segmentation_pilot/) is the bridge
+for running **real** segmentation models on a **real** aerial dataset and packaging their
+output through the bundle builder above — model execution stays outside the benchmark core,
+which keeps its zero-dependency, model-agnostic runtime. It provides a `DatasetAdapter` /
+`SegmentationModel` boundary, nearest-neighbour mask resizing onto the GT grid, a latency
+protocol (warm-up, monotonic clock, per-frame samples, mean/median/p95), and honest energy
+provenance (`measured` / `externally_supplied` / `estimated` — never a silent zero).
+
+**No real pilot has been run in this repository** — it has no dataset, no checkpoints, no
+model stack, and no GPU (see `experiments/real_segmentation_pilot/STATUS.md`). Nothing is
+fabricated: the tooling is verified end to end with a clearly-labelled **stub** model over a
+tiny in-memory dataset, and no bundle is committed. Supply a dataset, checkpoints, and a pilot
+environment (`requirements.txt`), and the same tooling runs the real pilot unchanged.
+
 ### Measured baselines
 
 Pooled over 50 seeds per episode (n = 150), because three episodes can only produce a
@@ -266,6 +282,7 @@ aerointentbench/
 
 data/            benchmark specifications and fixtures (all synthetic)
 docs/            specification, architecture, branching
+experiments/     real-model tooling OUTSIDE the core (real_segmentation_pilot)
 tests/           pytest suite
 ```
 

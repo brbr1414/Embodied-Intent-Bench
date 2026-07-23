@@ -197,3 +197,13 @@ inferred from a blank cell; provenance must stay honest (never label hand-author
 estimated numbers as `measured`). Builds are deterministic except one provenance timestamp
 (`--created-at` pins it). The committed `data/examples/empirical_source/` is synthetic and
 tests conversion correctness only — still no real model or dataset in the repo.
+
+**Real-model tooling lives under `experiments/` — never in the core package.** The benchmark
+runtime stays zero-dependency and model-agnostic; heavy deps (torch, etc.) belong to an
+experiments-specific `requirements.txt`. `experiments/real_segmentation_pilot/` is the pilot
+bridge (DatasetAdapter / SegmentationModel boundary, mask resize, latency protocol, energy
+provenance) feeding the bundle builder. **No real pilot has been run** — this environment has
+no dataset, checkpoints, model stack, or GPU (see its `STATUS.md`); the tooling is verified
+with a labelled stub only. Do not fabricate pilot results: no hand-authored masks, no invented
+latency/energy, and never present a stub run or an `estimated` energy value as a real measured
+result.
