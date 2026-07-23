@@ -5,8 +5,9 @@ Two metric families are kept strictly apart and never divided into each other:
 - **Mission, track-level**: ``target_recall`` = unique ground-truth tracks found / total valid
   tracks. This is the canonical empirical mission-quality metric.
 - **Frame, detection-level**: ``detection_precision`` = matched predictions / non-ignored
-  predictions, plus the false-positive burden (`false_positive_detections`,
-  `false_positives_per_minute`).
+  predictions, plus the false-positive burden (`false_positive_detections`, and the two
+  denominator-named rates `false_positives_per_processed_minute` and
+  `false_positives_per_mission_minute`).
 
 Track-level precision and F1 are unavailable without persistent predicted-track identity, so
 they are surfaced as ``None`` with a reason, never as a mixed-unit number. Everything is
@@ -273,8 +274,8 @@ def test_repeated_false_positives_lower_detection_precision_consistently(evaluat
 # --- false-positive burden (point 5) ---------------------------------------------------------
 
 
-def test_false_positives_per_minute_is_computed_from_processed_frames(evaluator) -> None:
-    # 2 false positives over 6 processed frames == 2 per 6 s == 20 per minute (1 fps nominal).
+def test_false_positives_per_processed_minute_is_computed_from_processed_frames(evaluator) -> None:
+    # 2 false positives over 6 processed frames == 2 per 6 s == 20 per processed minute (1 fps).
     gt = HumanSearchMaskGroundTruth(frame_stream_id="S", frames=())
     evidence = record(
         prediction("FP0", mask(*FAR), frame_id=0),
@@ -283,12 +284,13 @@ def test_false_positives_per_minute_is_computed_from_processed_frames(evaluator)
     )
     scores = evaluator.score_empirical(evidence, gt)
     assert scores.false_positive_detections == 2
-    assert scores.false_positives_per_minute == pytest.approx(20.0)
+    assert scores.false_positives_per_processed_minute == pytest.approx(20.0)
 
 
-def test_false_positives_per_minute_of_nothing_examined_is_zero(evaluator) -> None:
+def test_false_positives_per_processed_minute_of_nothing_examined_is_zero(evaluator) -> None:
     empty_gt = HumanSearchMaskGroundTruth(frame_stream_id="S", frames=())
-    assert evaluator.score_empirical(record(frames=0), empty_gt).false_positives_per_minute == 0.0
+    scores = evaluator.score_empirical(record(frames=0), empty_gt)
+    assert scores.false_positives_per_processed_minute == 0.0
 
 
 # --- ignore regions (point 6) ----------------------------------------------------------------
@@ -528,7 +530,12 @@ def test_the_empirical_example_runs_through_the_cli_with_verified_values(tmp_pat
     assert d["total_predictions"] == 5
     assert d["false_positive_detections"] == 2
     assert d["detection_precision"] == pytest.approx(0.6)
-    assert d["false_positives_per_minute"] == pytest.approx(40.0)  # 2 fp over 3 frames
+    # Two false-positive-rate metrics, each named for its denominator, and they differ here:
+    # 3 frames were examined (2 fp / 3 frames -> 40.0 per processed minute) but the mission ran
+    # 4.0 s of wall-clock before the deadline stopped it (2 fp / 4.0 s -> 30.0 per mission
+    # minute). That divergence is exactly why the denominator is in the name.
+    assert d["false_positives_per_processed_minute"] == pytest.approx(40.0)
+    assert d["false_positives_per_mission_minute"] == pytest.approx(30.0)
     # explicitly unavailable
     assert d["target_f1"] is None
     assert d["track_level_metrics_available"] is False

@@ -206,4 +206,15 @@ provenance) feeding the bundle builder. **No real pilot has been run** — this 
 no dataset, checkpoints, model stack, or GPU (see its `STATUS.md`); the tooling is verified
 with a labelled stub only. Do not fabricate pilot results: no hand-authored masks, no invented
 latency/energy, and never present a stub run or an `estimated` energy value as a real measured
-result.
+result. **The V1 empirical infrastructure is complete, but no publication-quality real
+dataset/model pilot is included yet.**
+
+**Integrated-and-frozen (V1 empirical stack).** The four empirical commits are integrated into
+`develop/v1` and their schemas frozen at `schema_version "1.0"` (`docs/v1_spec.md` §14.1). Two
+interface rules to preserve: (1) **fallback is model-agnostic** — resolved by
+`benchmark.resolve_fallback_config_id` (explicit `--fallback-config-id` → episode
+`fallback_config_id` → `initial_config_id` → legacy `CFG_LOCAL_LIGHT` if present → fail); a
+data root need not contain `CFG_LOCAL_LIGHT`, and do not reintroduce that assumption. (2)
+**false-positive rates are named for their denominators** — `false_positives_per_processed_minute`
+(examined footage, from the evaluator) and `false_positives_per_mission_minute` (wall-clock,
+from the episode metrics); do not revive the ambiguous `false_positives_per_minute`.

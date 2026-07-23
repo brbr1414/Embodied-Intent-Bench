@@ -40,8 +40,9 @@ from aerointentbench.schemas.profile import (
 )
 from aerointentbench.schemas.task_spec import TaskSpec, check_contract_is_supported, load_task_spec
 from aerointentbench.simulator.action_validator import (
-    DEFAULT_SAFE_FALLBACK_CONFIG_ID,
+    LEGACY_FALLBACK_CONFIG_ID,
     ActionValidator,
+    fallback_rejection_reason,
 )
 from aerointentbench.simulator.battery_model import BatteryModel, SimpleBatteryModel
 from aerointentbench.simulator.episode_runner import EpisodeRunner
@@ -56,6 +57,7 @@ __all__ = [
     "BenchmarkData",
     "EpisodeResult",
     "SuiteResult",
+    "resolve_fallback_config_id",
     "run_episode",
     "run_suite",
 ]
@@ -217,6 +219,65 @@ class BenchmarkData:
         return tuple(_load_all(self._root / "contracts", load_contract))
 
 
+def resolve_fallback_config_id(
+    *,
+    episode: Episode,
+    catalog: ConfigCatalog,
+    privacy_level,
+    explicit: str | None = None,
+) -> str:
+    """Resolve the safe fallback configuration for an episode, by explicit precedence.
+
+    A misbehaving policy's invalid action is replaced by this configuration when there is no
+    current one to keep, so it must be resolved and validated *before* the episode starts, and
+    it must not silently assume any particular configuration name exists. Precedence:
+
+    1. ``explicit`` (e.g. a ``--fallback-config-id`` CLI override), if supplied.
+    2. The episode's ``fallback_config_id``, if supplied.
+    3. The episode's ``initial_config_id``, if it is a usable configuration.
+    4. The legacy ``CFG_LOCAL_LIGHT``, only if it exists and is usable (backward compatibility).
+    5. Otherwise fail, requiring an explicit fallback.
+
+    A fallback *supplied* at (1) or (2) but unusable is an error, not a reason to fall through:
+    a named-but-broken fallback is a misconfiguration worth surfacing. Steps (3) and (4) are
+    best-effort and fall through when their candidate is not usable. "Usable" means present in
+    the catalog, in the episode's allowed pool, and permitted by the privacy level -- never an
+    arbitrary "first configuration in the catalog".
+    """
+
+    def reject(config_id: str) -> str | None:
+        return fallback_rejection_reason(
+            config_id,
+            catalog=catalog,
+            allowed_config_ids=episode.allowed_config_ids,
+            privacy_level=privacy_level,
+        )
+
+    for source, candidate in (
+        ("--fallback-config-id override", explicit),
+        (f"episode {episode.episode_id!r} fallback_config_id", episode.fallback_config_id),
+    ):
+        if candidate is not None:
+            problem = reject(candidate)
+            if problem is not None:
+                raise SchemaValidationError(
+                    f"{source} {candidate!r} is unusable as a fallback: {problem}"
+                )
+            return candidate
+
+    for candidate in (episode.initial_config_id, LEGACY_FALLBACK_CONFIG_ID):
+        if candidate is not None and reject(candidate) is None:
+            return candidate
+
+    raise SchemaValidationError(
+        f"episode {episode.episode_id!r} has no usable safe fallback configuration. Its "
+        f"allowed pool is {list(episode.allowed_config_ids)} and the legacy default "
+        f"{LEGACY_FALLBACK_CONFIG_ID!r} is not available. Pass --fallback-config-id, or set the "
+        "episode's fallback_config_id (or a usable initial_config_id) to a configuration that "
+        "is in the catalog, in the allowed pool, and permitted by the privacy level."
+    )
+
+
 def run_episode(
     *,
     data: BenchmarkData,
@@ -230,7 +291,7 @@ def run_episode(
     battery_model: BatteryModel | None = None,
     network_model: NetworkModel | None = None,
     disclose_profiles: bool = True,
-    fallback_config_id: str = DEFAULT_SAFE_FALLBACK_CONFIG_ID,
+    fallback_config_id: str | None = None,
 ) -> EpisodeResult:
     """Assemble the components for one episode, run it, and score the result.
 
@@ -246,6 +307,9 @@ def run_episode(
             ``"unregistered:<ClassName>"`` rather than mislabelled as a registered one.
         replay_strict: Whether a missing replay record raises instead of being recorded as
             a failed inference.
+        fallback_config_id: An explicit safe-fallback override. When ``None`` the fallback is
+            resolved from the episode by :func:`resolve_fallback_config_id`; when given it takes
+            precedence and must itself be a usable configuration.
         battery_model: Overrides ``SimpleBatteryModel``. The seam a recorded-discharge or
             electrochemical model plugs into.
         network_model: Overrides the trace-based model. The seam an external simulator
@@ -262,6 +326,15 @@ def run_episode(
     )
     check_catalog_is_profiled(
         profiles, config_ids=episode.allowed_config_ids, platform_id=episode.platform_id
+    )
+    # Resolve the safe fallback up front, by explicit precedence, so a data root with its own
+    # configuration names is not obliged to contain the legacy CFG_LOCAL_LIGHT. Fails here,
+    # before any step runs, if nothing usable can be resolved.
+    resolved_fallback = resolve_fallback_config_id(
+        episode=episode,
+        catalog=data.catalog,
+        privacy_level=contract.privacy_level,
+        explicit=fallback_config_id,
     )
 
     task = resolve_task(task_spec)
@@ -316,7 +389,7 @@ def run_episode(
             catalog=data.catalog,
             allowed_config_ids=episode.allowed_config_ids,
             privacy_level=contract.privacy_level,
-            fallback_config_id=fallback_config_id,
+            fallback_config_id=resolved_fallback,
         ),
         policy_name=policy_name,
     )
@@ -339,6 +412,7 @@ def run_suite(
     disclose_profiles: bool = True,
     replay_strict: bool = False,
     repeats: int = 1,
+    fallback_config_id: str | None = None,
 ) -> SuiteResult:
     """Run every episode against one contract and aggregate the results.
 
@@ -378,6 +452,7 @@ def run_suite(
             executor_name=executor_name,
             disclose_profiles=disclose_profiles,
             replay_strict=replay_strict,
+            fallback_config_id=fallback_config_id,
         )
         for episode in episodes
         for repeat in range(repeats)

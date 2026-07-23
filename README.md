@@ -22,8 +22,15 @@ control, or open-ended language understanding.
 → state and evidence updates → termination → metrics JSON. Runs on CPU with **zero runtime
 dependencies**; re-running produces a byte-identical result.
 
-574 tests, clean under `ruff check` and `ruff format`. Known limitations are recorded in
+592 tests, clean under `ruff check` and `ruff format`. Known limitations are recorded in
 [`docs/v1_spec.md`](docs/v1_spec.md) §16 rather than left implicit.
+
+**The V1 empirical infrastructure is complete, but no publication-quality real dataset/model
+pilot is included yet.** Four stages are integrated and frozen at `schema_version "1.0"`:
+empirical mask-IoU evaluation, unit-consistent metrics, the empirical bundle builder, and the
+real-segmentation pilot *tooling* (which has run no real model — see
+`experiments/real_segmentation_pilot/STATUS.md`). See [`docs/v1_spec.md`](docs/v1_spec.md)
+§14.1 for the frozen schema registry.
 
 ## The loop
 
@@ -97,7 +104,9 @@ Mission Success Rate: 100% over 3 episode(s)
   quality 100%   deadline 100%   battery 100%   communication 100%   privacy 100%
 ```
 
-Useful flags: `--hide-profiles` withholds public configuration profiles from the policy;
+Useful flags: `--fallback-config-id CFG` sets the safe fallback for invalid policy actions
+(otherwise resolved from the episode, then the legacy `CFG_LOCAL_LIGHT` if present — a bundle
+need not contain it); `--hide-profiles` withholds public configuration profiles from the policy;
 `--include-detail` adds the step log and raw evidence (large, and it contains
 ground-truth-derived fields — do not publish a detailed result file).
 
@@ -154,7 +163,7 @@ and never divides one into the other:
 |---|---|---|
 | `target_recall` (canonical) | mission, **track-level** | unique GT tracks found / total valid tracks — deduplicated by hidden track ID |
 | `detection_precision` | frame, **detection-level** | matched predictions / non-ignored predictions |
-| `false_positive_detections`, `false_positives_per_minute` | frame | the false-positive burden (per minute of examined 1 fps footage) |
+| `false_positive_detections` + `false_positives_per_processed_minute` (examined footage) and `false_positives_per_mission_minute` (wall-clock) | frame | the false-positive burden; each rate is named for its denominator |
 
 **Track-level precision and F1 are not reported.** They would need a prediction tied to a
 persistent predicted *track* across frames, and independent per-frame masks carry no such
@@ -177,7 +186,8 @@ python -m aerointentbench.run_benchmark \
   --output results/empirical_example.json
 # quality metric target_recall = 0.667 (2 of 3 tracks found)
 # detection_precision 0.6 (3 of 5 detections matched), false_positive_detections 2,
-# false_positives_per_minute 40.0; target_f1 = null (track-level, unavailable)
+# false_positives_per_processed_minute 40.0, false_positives_per_mission_minute 30.0;
+# target_f1 = null (track-level, unavailable)
 ```
 
 This branch adds no real model and no dataset: the masks are a **synthetic correctness

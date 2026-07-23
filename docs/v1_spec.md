@@ -517,7 +517,9 @@ unit, so the empirical path reports two families and never divides one into the 
 |---|---|---|
 | `target_recall` (canonical mission metric) | mission, **track-level** | `unique_targets_found / total_unique_targets` — a track matched on any frame is one find, deduplicated by hidden `track_id` |
 | `detection_precision` | frame, **detection-level** | `matched_detections / total_predictions` (non-ignored predictions) |
-| `false_positive_detections`, `false_positives_per_minute` | frame | unmatched, non-absorbed detections; the rate is per minute of examined footage at the nominal 1 fps |
+| `false_positive_detections` | frame | unmatched, non-absorbed detections (count) |
+| `false_positives_per_processed_minute` | frame / examined footage | `false_positive_detections` per minute of *processed frames* at the nominal 1 fps — detection-error density of what was looked at (from the evaluator) |
+| `false_positives_per_mission_minute` | frame / wall-clock | `false_positive_detections` per minute of *mission completion time* (added by the episode metrics, which know the clock); zero-duration ⇒ `0.0` |
 
 **Track-level precision and F1 are not computed.** They require a prediction associated with
 a persistent predicted *track* across frames; independent per-frame masks carry no such
@@ -538,8 +540,11 @@ people): one exact match, one partial match above threshold, one below-threshold
 one false positive, one missed target, one ignore region, and predictions under two configs
 with differing latency and energy. It scores, by hand and in code, `target_recall 2/3`
 (`unique_targets_found 2 / total 3`), `detection_precision 0.6` (`matched_detections 3 /
-total_predictions 5`), `false_positive_detections 2`, `false_positives_per_minute 40.0`, and
-`target_f1 null`.
+total_predictions 5`), `false_positive_detections 2`, `false_positives_per_processed_minute
+40.0`, and `target_f1 null`. Run to termination through the CLI, the wall-clock
+`false_positives_per_mission_minute` is `30.0` (the deadline admits one empty frame past the
+last ground-truth frame, so 4.0 s of mission time), which is exactly why each rate is named
+for its denominator.
 
 ### 4.16 Building empirical bundles from external data
 
@@ -621,8 +626,19 @@ An action is invalid if it is not a string at all, if the ID is unknown, if it i
 
 - record an invalid-action violation;
 - if a valid current config exists, keep it;
-- otherwise use the configurable safe fallback (default `CFG_LOCAL_LIGHT`);
+- otherwise use the **resolved safe fallback**;
 - **never** crash the benchmark because of one invalid action.
+
+**Fallback resolution (model-agnostic).** The fallback is resolved by the composition root
+*before* the episode starts (`benchmark.resolve_fallback_config_id`), not hard-coded to any
+configuration name, so a data root built with its own configuration IDs is not obliged to
+contain `CFG_LOCAL_LIGHT`. Precedence: **(1)** an explicit `--fallback-config-id` override;
+**(2)** the episode's optional `fallback_config_id`; **(3)** the episode's `initial_config_id`
+if usable; **(4)** the legacy `CFG_LOCAL_LIGHT` only when present and usable; **(5)** otherwise
+fail before step 0, requiring an explicit fallback. A fallback *supplied* at (1) or (2) but
+unusable is an error, not a fall-through. "Usable" means present in the catalog, in the allowed
+pool, and permitted by the privacy level — never an arbitrary "first configuration in the
+catalog". The resolved fallback is validated once more at `ActionValidator` construction.
 
 The current configuration is re-checked before being kept: an episode's declared
 `initial_config_id` never passed through validation, so it may itself be disallowed or
@@ -978,6 +994,31 @@ inside `develop/v1`. When a break is unavoidable: bump `schema_version`, update 
 update tests, document the change — and never silently reinterpret an old field.
 Migration support belongs in `aerointentbench/schemas/loading.py`; it is documented, not
 implemented, in V1.
+
+### 14.1 Frozen empirical schema registry
+
+Every externally consumed format below is at **`schema_version` `"1.0"`** and frozen for V1.
+All are loaded through `aerointentbench/schemas/loading.py`, which **rejects any version other
+than `"1.0"`** (`SchemaVersionError`) rather than reinterpreting it, validates fields strictly
+(unknown keys are errors), and serialises deterministically (sorted keys). The empirical
+execution modes are distinguished as: **synthetic profile** (`executor_id="profile"`, no
+`quality_evaluation` tag), **legacy scalar replay** (`executor_id="replay"`, no tag),
+**empirical mask replay** (`executor_id="replay"`, `quality_evaluation="empirical_mask_iou"`).
+
+| Schema | Version | Producer → Consumer | Hidden / private | Notes |
+|---|---|---|---|---|
+| Empirical mask **ground truth** (`frames[]` of masks) | 1.0 | dataset/bundle → evaluator | **whole file** (masks, track ids); never policy-visible | §4.15; discriminated from interval GT by the `frames` key |
+| Empirical **prediction** payload (inside a replay record) | 1.0 | model/bundle → evaluator | none — masks are prediction output, but must **not** carry `ground_truth_track_id` or a trusted `mask_iou` | §4.15 |
+| **Replay record set** (`data/predictions/*.json`) | 1.0 | recorder/bundle → `ReplayExecutor` | none | keyed by `episode_id`; at most one per episode |
+| Bundle-builder **source manifest** | 1.0 | researcher → `build_empirical_bundle` | none | the versioned envelope for its prediction JSONL / measurement CSV sources (those inherit its version) |
+| Bundle **provenance manifest** (`provenance.json`) | 1.0 | `build_empirical_bundle` → readers/validator | none | records `data_origin`, per-config `prediction_provenance` / `measurement_provenance`, SHA-256 of every generated file |
+| Pilot intermediate (GT JSON / prediction JSONL / measurement CSV) | 1.0 (GT & manifest) | pilot runner → bundle builder | GT hidden | JSONL/CSV are per-config streams under the manifest's version; `experiments/real_segmentation_pilot/` |
+
+**Compatibility guarantee for V1:** these field sets and their meanings are stable within
+`develop/v1`. `initial_config_id` and the new optional `fallback_config_id` on an episode are
+additive and backward-compatible (absent ⇒ prior behaviour). A future breaking change bumps
+the version and adds a migration in `loading.py`; an unsupported future version fails loudly
+today rather than being guessed at.
 
 ## 15. Explicit V1 assumptions
 

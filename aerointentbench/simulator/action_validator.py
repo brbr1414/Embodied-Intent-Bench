@@ -27,20 +27,28 @@ from aerointentbench.schemas.contract import PrivacyLevel
 
 __all__ = [
     "DEFAULT_SAFE_FALLBACK_CONFIG_ID",
+    "LEGACY_FALLBACK_CONFIG_ID",
     "TRANSMITTED_PAYLOAD_PARAMETER",
     "ActionOutcome",
     "ActionValidator",
     "TransmittedPayload",
     "ValidatedAction",
+    "fallback_rejection_reason",
     "is_switch",
     "privacy_permits",
 ]
 
-#: Fallback used when a policy's first action is invalid and there is no current
-#: configuration to keep. Names a configuration in the shipped V1 catalog, so an episode
-#: whose allowed pool omits it must pass its own fallback. Constructor-injected rather
-#: than looked up globally, and validated at construction.
-DEFAULT_SAFE_FALLBACK_CONFIG_ID: Final = "CFG_LOCAL_LIGHT"
+#: The configuration named as a *last-resort* legacy fallback, for a data root built around
+#: the shipped V1 catalog. It is not required to exist: the composition root resolves a
+#: fallback by explicit precedence (see ``benchmark.resolve_fallback_config_id``) and only
+#: falls back to this name when it is present and usable, so a bundle with different config
+#: IDs is not obliged to contain it.
+LEGACY_FALLBACK_CONFIG_ID: Final = "CFG_LOCAL_LIGHT"
+
+#: Backwards-compatible alias. Callers that constructed an ``ActionValidator`` without naming
+#: a fallback used to get this default; the resolver now supplies an explicit resolved id, but
+#: the constructor keeps the same default so existing direct callers are unaffected.
+DEFAULT_SAFE_FALLBACK_CONFIG_ID: Final = LEGACY_FALLBACK_CONFIG_ID
 
 #: Strategy parameter declaring what a remote configuration puts on the wire. Lives in
 #: ``strategy.parameters`` because it is exactly the controlled extension point for a
@@ -126,6 +134,30 @@ def privacy_permits(privacy_level: PrivacyLevel, configuration: Configuration) -
         TRANSMITTED_PAYLOAD_PARAMETER, TransmittedPayload.RAW_INPUT.value
     )
     return declared == TransmittedPayload.FEATURES.value
+
+
+def fallback_rejection_reason(
+    config_id: str,
+    *,
+    catalog: ConfigCatalog,
+    allowed_config_ids: tuple[str, ...],
+    privacy_level: PrivacyLevel,
+) -> str | None:
+    """Return why ``config_id`` may not serve as a fallback, or ``None`` if it may.
+
+    A usable fallback must exist in the catalog, be in the episode's allowed pool, and be
+    permitted by the contract's privacy level -- the same three structural requirements the
+    validator imposes on any configuration it would run. Exposed so the composition root can
+    resolve and validate a fallback *before* the episode starts, without depending on an
+    ``ActionValidator`` instance or on any particular configuration name.
+    """
+    if config_id not in catalog:
+        return f"no configuration {config_id!r} in the catalog"
+    if config_id not in allowed_config_ids:
+        return f"{config_id!r} is not in the episode's allowed pool {list(allowed_config_ids)}"
+    if not privacy_permits(privacy_level, catalog.get(config_id)):
+        return f"{config_id!r} is forbidden by privacy level {privacy_level.value!r}"
+    return None
 
 
 def is_switch(previous_config_id: str | None, current_config_id: str) -> bool:

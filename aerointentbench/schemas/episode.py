@@ -27,6 +27,7 @@ _FIELDS: Final = (
     "network_trace_id",
     "allowed_config_ids",
     "initial_config_id",
+    "fallback_config_id",
     "seed",
 )
 
@@ -51,6 +52,11 @@ class Episode:
     allowed_config_ids: tuple[str, ...]
     initial_config_id: str | None
     seed: int
+    #: Optional per-episode safe fallback, used when a policy's action is invalid and there is
+    #: no current configuration to keep. It replaces the benchmark-wide legacy assumption that
+    #: a ``CFG_LOCAL_LIGHT`` exists, so a data root built with its own configuration names can
+    #: declare its own fallback. Must be in ``allowed_config_ids`` if present.
+    fallback_config_id: str | None = None
 
 
 def load_episode(path: Path) -> Episode:
@@ -62,6 +68,12 @@ def load_episode(path: Path) -> Episode:
     if initial_config_id is not None and initial_config_id not in allowed_config_ids:
         raise SchemaValidationError(
             f"{reader.context}: initial_config_id {initial_config_id!r} is not in "
+            f"allowed_config_ids {list(allowed_config_ids)}"
+        )
+    fallback_config_id = reader.get_optional_str("fallback_config_id")
+    if fallback_config_id is not None and fallback_config_id not in allowed_config_ids:
+        raise SchemaValidationError(
+            f"{reader.context}: fallback_config_id {fallback_config_id!r} is not in "
             f"allowed_config_ids {list(allowed_config_ids)}"
         )
 
@@ -78,4 +90,5 @@ def load_episode(path: Path) -> Episode:
         allowed_config_ids=allowed_config_ids,
         initial_config_id=initial_config_id,
         seed=reader.get_int("seed"),
+        fallback_config_id=fallback_config_id,
     )

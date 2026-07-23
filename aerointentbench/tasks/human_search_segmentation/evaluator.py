@@ -120,7 +120,11 @@ class EmpiricalQualityScores:
     total_predictions: int
     false_positive_detections: int
     detection_precision: float
-    false_positives_per_minute: float
+    #: False positives per minute of *examined footage* (processed frames at the nominal 1 fps
+    #: stream), NOT per minute of mission wall-clock. Named for its denominator; the wall-clock
+    #: rate ``false_positives_per_mission_minute`` is added by the episode metrics, which know
+    #: the mission's completion time.
+    false_positives_per_processed_minute: float
 
     def value_of(self, metric_name: str) -> float:
         """Return the value a contract may be scored on -- recall, or detection precision.
@@ -152,7 +156,7 @@ class EmpiricalQualityScores:
             "total_predictions": self.total_predictions,
             "false_positive_detections": self.false_positive_detections,
             METRIC_DETECTION_PRECISION: self.detection_precision,
-            "false_positives_per_minute": self.false_positives_per_minute,
+            "false_positives_per_processed_minute": self.false_positives_per_processed_minute,
             # explicitly unavailable -- never a mixed-unit number under a track-level name
             "track_level_precision": None,
             "target_f1": None,
@@ -335,7 +339,7 @@ class HumanSearchSegmentationEvaluator:
             total_predictions=total_predictions,
             false_positive_detections=false_positive_detections,
             detection_precision=_ratio(matched_detections, total_predictions, empty=1.0),
-            false_positives_per_minute=_per_minute(
+            false_positives_per_processed_minute=_per_processed_minute(
                 false_positive_detections, evidence.processed_frames
             ),
         )
@@ -387,13 +391,12 @@ def _harmonic_mean(precision: float, recall: float) -> float:
     return 2.0 * precision * recall / (precision + recall)
 
 
-def _per_minute(count: int, processed_frames: int) -> float:
-    """A per-minute rate over examined footage at the nominal one-frame-per-second stream.
+def _per_processed_minute(count: int, processed_frames: int) -> float:
+    """A per-minute rate over *examined footage* at the nominal one-frame-per-second stream.
 
-    Normalised by frames the detector actually ran on, not wall-clock time: a slow
-    configuration that skips frames should not have its false positives spread thinner over
-    the seconds it was not looking. No frames examined yields ``0.0`` -- nothing was looked
-    at, so nothing could be falsely reported.
+    Normalised by frames the detector actually ran on, not wall-clock time: this is the
+    detection-error density of what was looked at. The mission wall-clock rate is a separate,
+    explicitly named metric added by the episode metrics. No frames examined yields ``0.0``.
     """
     if processed_frames <= 0:
         return 0.0

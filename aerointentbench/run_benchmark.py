@@ -94,6 +94,17 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--fallback-config-id",
+        default=None,
+        metavar="CONFIG_ID",
+        help=(
+            "Safe fallback configuration for invalid policy actions, overriding the episode's "
+            "own fallback. Must be in the catalog and the episode's allowed pool. When omitted, "
+            "the fallback is resolved from the episode (fallback_config_id, then "
+            "initial_config_id, then the legacy CFG_LOCAL_LIGHT if present)."
+        ),
+    )
+    parser.add_argument(
         "--repeats",
         type=int,
         default=1,
@@ -147,6 +158,7 @@ def main(argv: list[str] | None = None) -> int:
             disclose_profiles=not args.hide_profiles,
             replay_strict=args.replay_strict,
             repeats=args.repeats,
+            fallback_config_id=args.fallback_config_id,
         )
     except NotImplementedError as error:
         # A selected-but-unbuilt backend (real_segmentation) fails at construction, before
