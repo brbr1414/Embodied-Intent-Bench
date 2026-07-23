@@ -28,6 +28,7 @@ own true positive count.
 """
 
 from aerointentbench.tasks.human_search_segmentation.evaluator import (
+    EmpiricalQualityScores,
     HumanSearchSegmentationEvaluator,
     QualityScores,
 )
@@ -73,6 +74,7 @@ __all__ = [
     "TARGET_CATEGORY",
     "TASK_ID",
     "BinaryMask",
+    "EmpiricalQualityScores",
     "EvidenceInstance",
     "FrameGroundTruth",
     "FrameMatching",

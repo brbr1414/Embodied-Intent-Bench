@@ -509,10 +509,24 @@ descending with identifier tie-breaks. Each prediction and each target pairs at 
 Greedy rather than optimal (Hungarian) — V1 has no array or `scipy` dependency and the
 per-frame instance counts are tiny; the limitation and its tie-breaking are tested.
 
-**Mission scoring** is per unique target: a track matched in any frame is one found target
-(deduplicated by hidden `track_id`); every unmatched prediction is one false positive; every
-never-matched target is one miss. `precision = TP/(TP+FP)`, `recall = TP/total`, `F1` their
-harmonic mean — the same `QualityScores` shape the precomputed path produces.
+**Scoring keeps two counting units strictly apart** — the fix that this metric semantics
+depends on. Mixing them (unique-track TP over frame-level FP) produces a number in neither
+unit, so the empirical path reports two families and never divides one into the other:
+
+| Metric | Unit | Definition |
+|---|---|---|
+| `target_recall` (canonical mission metric) | mission, **track-level** | `unique_targets_found / total_unique_targets` — a track matched on any frame is one find, deduplicated by hidden `track_id` |
+| `detection_precision` | frame, **detection-level** | `matched_detections / total_predictions` (non-ignored predictions) |
+| `false_positive_detections`, `false_positives_per_minute` | frame | unmatched, non-absorbed detections; the rate is per minute of examined footage at the nominal 1 fps |
+
+**Track-level precision and F1 are not computed.** They require a prediction associated with
+a persistent predicted *track* across frames; independent per-frame masks carry no such
+identity (a per-frame `prediction_id` is not a track). They appear in the result as `null`
+with `track_level_metrics_available: false` and a stated reason — never a mixed-unit number
+under a track-level name. A contract may therefore score empirical missions on `target_recall`
+(canonical) or `detection_precision`; asking for `target_precision`/`target_f1` fails loudly.
+The example empirical contract uses `target_recall`. The precomputed path is unchanged and
+still produces the track-level `QualityScores` (`target_precision`/`target_f1`).
 
 **Provenance.** An empirically scored result is tagged `quality_evaluation:
 "empirical_mask_iou"` in its quality details. With `executor_id`, this separates the three
@@ -522,8 +536,10 @@ sources a result can have: synthetic profile (`profile`, no tag), legacy scalar 
 A tiny worked example ships under `data/examples/empirical_replay/` (8×8 masks, three tracked
 people): one exact match, one partial match above threshold, one below-threshold detection,
 one false positive, one missed target, one ignore region, and predictions under two configs
-with differing latency and energy. It scores, by hand and in code, `precision 0.5`, `recall
-2/3`, `F1 4/7` with `matched 2 / total 3 / false_positive 2`.
+with differing latency and energy. It scores, by hand and in code, `target_recall 2/3`
+(`unique_targets_found 2 / total 3`), `detection_precision 0.6` (`matched_detections 3 /
+total_predictions 5`), `false_positive_detections 2`, `false_positives_per_minute 40.0`, and
+`target_f1 null`.
 
 ### 4.16 Shipped fixtures
 
@@ -956,7 +972,7 @@ version.
 | **One catalog per data root** | Selecting among several configuration catalogs is not specified. |
 | **`features_only` is untested end to end** | The rule is implemented and unit-tested, but no shipped episode exercises it, because no shipped configuration declares a feature payload. |
 | **Empirical masks are still synthetic** | §4.15 computes real IoU from real masks and matches one-to-one, but the masks it consumes are a hand-authored correctness example, not model output. No real segmentation model, dataset, or `frame × config` capture is included; `real_segmentation` remains a construction-time stub. Empirical replay is the seam such a capture plugs into. |
-| **Empirical precision mixes two units** | Empirical target precision is `TP/(TP+FP)` with `TP` unique found tracks and `FP` unmatched per-frame predictions, so a spurious detection on many frames counts many times while a found track counts once. It is deliberate and documented (§4.15), but it is not a per-detection precision; a stricter definition would track predicted identities across frames. |
+| **No empirical track-level precision or F1** | Track-level precision and F1 need a prediction tied to a persistent predicted *track* across frames, and V1 empirical replay carries independent per-frame masks with no such identity. Rather than mix a track count with a detection count, empirical scoring reports `target_recall` (track-level) and `detection_precision` (detection-level) separately, and leaves `target_f1` `null` (§4.15). Persistent predicted-track association — a tracker over the predictions — would be needed to add them. |
 | **Greedy matching, not optimal** | Empirical matching is greedy by IoU, not the globally optimal assignment. The two disagree only under contrived overlaps at the per-frame instance counts V1 sees; adding an optimal matcher would mean an array dependency V1 forbids. |
 
 ## 17. Milestone

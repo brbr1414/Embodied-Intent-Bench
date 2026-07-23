@@ -22,7 +22,7 @@ control, or open-ended language understanding.
 → state and evidence updates → termination → metrics JSON. Runs on CPU with **zero runtime
 dependencies**; re-running produces a byte-identical result.
 
-519 tests, clean under `ruff check` and `ruff format`. Known limitations are recorded in
+524 tests, clean under `ruff check` and `ruff format`. Known limitations are recorded in
 [`docs/v1_spec.md`](docs/v1_spec.md) §16 rather than left implicit.
 
 ## The loop
@@ -137,8 +137,7 @@ Profile mode generates quality synthetically: a per-tier probability decides whe
 target is detected and a precomputed scalar stands in for mask overlap. **Empirical mask
 replay** removes the stand-in. Replay predictions carry actual instance **masks**, hidden
 ground truth carries per-frame **masks with track IDs**, and the evaluator computes mask IoU
-itself, matches predictions to targets **one-to-one** per frame, and deduplicates the finds
-by hidden track ID into unique-target precision, recall, and F1.
+itself and matches predictions to targets **one-to-one** per frame.
 
 The distinction from profile is not the executor alone — it is the ground truth. A stream
 whose `ground_truth/` file declares per-frame `frames` of masks is scored by IoU; one
@@ -148,10 +147,26 @@ policy sees none of it. A result scored this way is tagged `quality_evaluation:
 "empirical_mask_iou"` in its quality details, so a saved result distinguishes synthetic
 profile, legacy scalar replay, and empirical mask replay.
 
-A tiny, hand-verifiable example ships under `data/examples/empirical_replay/` — a few 8×8
-frames with two tracked people, one exact match, one partial match above threshold, one
-below-threshold detection, one false positive, and one missed target. Run it through the
-normal CLI:
+**Two metric families, kept apart.** Empirical scoring reports two unit-consistent groups
+and never divides one into the other:
+
+| Metric | Unit | Definition |
+|---|---|---|
+| `target_recall` (canonical) | mission, **track-level** | unique GT tracks found / total valid tracks — deduplicated by hidden track ID |
+| `detection_precision` | frame, **detection-level** | matched predictions / non-ignored predictions |
+| `false_positive_detections`, `false_positives_per_minute` | frame | the false-positive burden (per minute of examined 1 fps footage) |
+
+**Track-level precision and F1 are not reported.** They would need a prediction tied to a
+persistent predicted *track* across frames, and independent per-frame masks carry no such
+identity — a per-frame `prediction_id` is not a track. They are surfaced as `null` with a
+stated reason (`track_level_metrics_available: false`), never as a mixed-unit number. The
+canonical empirical mission-quality metric is therefore **`target_recall`**, and the example
+empirical contract uses it.
+
+A tiny, hand-verifiable example ships under `data/examples/empirical_replay/` — 8×8 frames
+with three tracked people, one exact match, one partial match above threshold, one
+below-threshold detection, one false positive, one missed target, and one ignore region. Run
+it through the normal CLI:
 
 ```bash
 python -m aerointentbench.run_benchmark \
@@ -160,8 +175,9 @@ python -m aerointentbench.run_benchmark \
   --contract data/examples/empirical_replay/contracts/contract.json \
   --policy rule_based --executor replay \
   --output results/empirical_example.json
-# -> target_precision 0.5, target_recall 0.667, target_f1 0.571,
-#    matched_targets 2, total_targets 3, false_positive_targets 2
+# quality metric target_recall = 0.667 (2 of 3 tracks found)
+# detection_precision 0.6 (3 of 5 detections matched), false_positive_detections 2,
+# false_positives_per_minute 40.0; target_f1 = null (track-level, unavailable)
 ```
 
 This branch adds no real model and no dataset: the masks are a **synthetic correctness

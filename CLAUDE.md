@@ -172,3 +172,12 @@ of it lives in the human-search task. Masks stay pure-Python (no numpy/scipy): t
 rule is not negotiable, so the matcher is a documented deterministic greedy, not Hungarian.
 The masks shipped under `data/examples/empirical_replay/` are a **synthetic correctness
 example**; no real model or dataset is included, and `real_segmentation` is still only a stub.
+
+Empirical metrics keep two counting units apart and never mix them: `target_recall`
+(track-level, the canonical mission metric) and `detection_precision` (detection-level), plus
+the false-positive burden. **Track-level precision and F1 are not computed** — independent
+per-frame masks carry no persistent predicted-track identity — and appear as `null`
+(`EmpiricalQualityScores`). Do not resurrect a `target_f1` from unique-track TP over
+frame-level FP; that mixed-unit value was the bug `fix/v1-empirical-metric-semantics` removed.
+The precomputed path (profile, legacy replay) is untouched and still yields `QualityScores`
+with `target_precision`/`target_f1`.

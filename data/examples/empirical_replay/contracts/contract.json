@@ -3,7 +3,7 @@
   "contract_id": "EMPIRICAL_EXAMPLE_CONTRACT",
   "task_id": "HUMAN_SEARCH_SEGMENTATION",
   "evidence_type": "instance_mask_set",
-  "quality_metric": "target_f1",
+  "quality_metric": "target_recall",
   "quality_operator": ">=",
   "quality_threshold": 0.50,
   "deadline_s": 3.0,
