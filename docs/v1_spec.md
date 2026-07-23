@@ -460,7 +460,72 @@ adaptation. Whether to raise it so that only adaptive policies pass is a **calib
 deferred to `feature/v1-policies`**, when real policies exist to calibrate against; tuning
 difficulty against hand-written strategy stubs would be fitting the benchmark to its own probe.
 
-### 4.15 Shipped fixtures
+### 4.15 Empirical mask replay
+
+§4.12 precomputes `mask_iou`: synthesis decides, per `(seed, frame_id, config_id, track_id)`,
+whether a target is detected and what its overlap "would have been". **Empirical mask replay**
+replaces that stand-in with real masks and a real IoU, without adding a model or a dataset —
+the masks are recorded (here, synthetic), the way a hardware capture would eventually supply
+them.
+
+Which path scores an episode is decided by the **ground-truth form**, never by the executor.
+A ground-truth file declaring per-frame `frames` of masks is scored empirically; one
+declaring visibility `targets` (§4.12) is scored by the precomputed scalar. The two may sit
+side by side in one `ground_truth/` directory; each file states which it is.
+
+**Mask ground truth** — hidden, never policy-visible — carries one mask per target per frame.
+A target keeps its `track_id` across frames; `ignore: true` marks a region excluded from the
+target total and from penalising overlapping predictions.
+
+```json
+{
+  "schema_version": "1.0",
+  "frame_stream_id": "EXAMPLE_STREAM",
+  "task_id": "HUMAN_SEARCH_SEGMENTATION",
+  "frames": [
+    { "frame_id": 0, "instances": [
+        { "track_id": "GT_A", "category": "person",
+          "mask": { "height": 8, "width": 8, "rows": ["00000000","01111000", "..."] } }
+    ] }
+  ]
+}
+```
+
+**Empirical predictions** ride inside a normal replay record's opaque `prediction` payload,
+so the replay schema itself is unchanged. Each instance carries `prediction_id`, `category`,
+`confidence`, and a `mask`; it must **not** carry `ground_truth_track_id` (a prediction may
+not name its answer) and any `mask_iou` on the wire is ignored, never trusted.
+
+**Mask encoding.** One explicit, versioned form: `{ "height", "width", "rows" }`, one `'0'`/
+`'1'` string per row. Dimensions are stated and recoverable; a ragged, mis-sized, or
+bad-character bitmap is rejected. It decodes to a boolean pixel set — the canonical internal
+mask. Other encodings (COCO RLE, polygons) would decode to the same type; none is needed in
+V1. `mask_iou = |A ∩ B| / |A ∪ B|`; different dimensions raise rather than compare, and two
+empty masks score `0.0` (no positive evidence of a target).
+
+**Matching** is deterministic and one-to-one per frame: build the prediction × target IoU
+matrix, keep pairs clearing the task spec's threshold (0.50), assign greedily by IoU
+descending with identifier tie-breaks. Each prediction and each target pairs at most once.
+Greedy rather than optimal (Hungarian) — V1 has no array or `scipy` dependency and the
+per-frame instance counts are tiny; the limitation and its tie-breaking are tested.
+
+**Mission scoring** is per unique target: a track matched in any frame is one found target
+(deduplicated by hidden `track_id`); every unmatched prediction is one false positive; every
+never-matched target is one miss. `precision = TP/(TP+FP)`, `recall = TP/total`, `F1` their
+harmonic mean — the same `QualityScores` shape the precomputed path produces.
+
+**Provenance.** An empirically scored result is tagged `quality_evaluation:
+"empirical_mask_iou"` in its quality details. With `executor_id`, this separates the three
+sources a result can have: synthetic profile (`profile`, no tag), legacy scalar replay
+(`replay`, no tag), and empirical mask replay (`replay`, tagged).
+
+A tiny worked example ships under `data/examples/empirical_replay/` (8×8 masks, three tracked
+people): one exact match, one partial match above threshold, one below-threshold detection,
+one false positive, one missed target, one ignore region, and predictions under two configs
+with differing latency and energy. It scores, by hand and in code, `precision 0.5`, `recall
+2/3`, `F1 4/7` with `matched 2 / total 3 / false_positive 2`.
+
+### 4.16 Shipped fixtures
 
 | File | Contents |
 |---|---|
@@ -475,11 +540,13 @@ difficulty against hand-written strategy stubs would be fitting the benchmark to
 | `data/predictions/synthetic_replay_example.json` | A four-record replay set exercising the replay backend |
 | `data/ground_truth/synthetic_human_search_stream_001.json` | 20 targets over STREAM_001: 4 sustained, 6 brief, 10 fleeting |
 | `data/episodes/episode_00{1,2,3}*.json` | One episode per network condition |
+| `data/examples/empirical_replay/` | A self-contained mini data root for §4.15: mask ground truth, a mask replay set, and its episode/contract. Synthetic correctness example, not a dataset |
 
 Files whose numbers are invented rather than chosen — platform profiles, network traces,
 and later configuration profiles, predictions, and ground truth — are named `synthetic_*`
 so a value lifted out of this repository cannot be mistaken for a measurement. A test
-enforces the naming.
+enforces the naming. The empirical-replay example lives under its own `data/examples/`
+root so it neither joins the shipped suite nor changes any pinned baseline.
 
 ## 5. Policy action and validation
 
@@ -888,6 +955,9 @@ version.
 | **Packet loss is inert** | Recorded in the step log; no retransmission or corruption model. |
 | **One catalog per data root** | Selecting among several configuration catalogs is not specified. |
 | **`features_only` is untested end to end** | The rule is implemented and unit-tested, but no shipped episode exercises it, because no shipped configuration declares a feature payload. |
+| **Empirical masks are still synthetic** | §4.15 computes real IoU from real masks and matches one-to-one, but the masks it consumes are a hand-authored correctness example, not model output. No real segmentation model, dataset, or `frame × config` capture is included; `real_segmentation` remains a construction-time stub. Empirical replay is the seam such a capture plugs into. |
+| **Empirical precision mixes two units** | Empirical target precision is `TP/(TP+FP)` with `TP` unique found tracks and `FP` unmatched per-frame predictions, so a spurious detection on many frames counts many times while a found track counts once. It is deliberate and documented (§4.15), but it is not a per-detection precision; a stricter definition would track predicted identities across frames. |
+| **Greedy matching, not optimal** | Empirical matching is greedy by IoU, not the globally optimal assignment. The two disagree only under contrived overlaps at the per-frame instance counts V1 sees; adding an optimal matcher would mean an array dependency V1 forbids. |
 
 ## 17. Milestone
 

@@ -30,19 +30,44 @@ from __future__ import annotations
 import hashlib
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, Final
+from typing import Any, Final, Protocol
 
 from aerointentbench.executor.base import ExecutionRequest
+from aerointentbench.schemas.loading import SchemaValidationError
 from aerointentbench.schemas.profile import ProfileCatalog, QualityTier
-from aerointentbench.tasks.human_search_segmentation.ground_truth import HumanSearchGroundTruth
+from aerointentbench.tasks.human_search_segmentation.ground_truth import (
+    TARGET_CATEGORY,
+    HumanSearchGroundTruth,
+)
+from aerointentbench.tasks.human_search_segmentation.masks import BinaryMask, decode_mask
 
 __all__ = [
     "DEFAULT_TIER_BEHAVIOUR",
+    "EvidenceInstance",
     "FramePrediction",
+    "MaskPredictedInstance",
     "PredictedInstance",
     "SyntheticHumanSearchPredictions",
     "TierBehaviour",
 ]
+
+
+class EvidenceInstance(Protocol):
+    """The fields every predicted instance exposes, whatever kind of prediction it is.
+
+    Both the precomputed :class:`PredictedInstance` and the empirical
+    :class:`MaskPredictedInstance` satisfy this. The evidence tracker's *policy* summary is
+    built from these fields alone -- none of them is ground-truth-derived -- so it works
+    identically for either kind. The evaluator, which does see ground truth, narrows to the
+    concrete type it needs.
+    """
+
+    prediction_id: str
+    frame_id: int
+    predicted_target_id: str
+    confidence: float
+
+    def to_dict(self) -> dict[str, Any]: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -95,11 +120,75 @@ class PredictedInstance:
 
 
 @dataclass(frozen=True, slots=True)
+class MaskPredictedInstance:
+    """One predicted person instance carrying its actual segmentation mask.
+
+    This is what an *empirical* replay serves: a real prediction whose overlap with ground
+    truth the evaluator computes, rather than a precomputed similarity. It carries no
+    ``ground_truth_track_id`` and no IoU -- a prediction may not name the target it "really"
+    is, and its quality is measured, not declared. ``predicted_target_id`` is the system's own
+    tracker identity (policy-visible, not ground truth); when a record omits it, the
+    per-detection ``prediction_id`` stands in.
+    """
+
+    prediction_id: str
+    frame_id: int
+    predicted_target_id: str
+    confidence: float
+    category: str
+    mask: BinaryMask
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "prediction_id": self.prediction_id,
+            "frame_id": self.frame_id,
+            "predicted_target_id": self.predicted_target_id,
+            "confidence": self.confidence,
+            "category": self.category,
+            "mask": self.mask.to_dict(),
+        }
+
+    @classmethod
+    def from_dict(
+        cls, payload: Mapping[str, Any], *, default_frame_id: int = -1
+    ) -> MaskPredictedInstance:
+        """Rebuild an empirical instance from a replayed payload.
+
+        A ``ground_truth_track_id`` here is rejected outright: ground-truth identity must not
+        travel inside a prediction, or replaying it would smuggle the answer key past the
+        boundary the whole benchmark rests on. Any ``mask_iou`` present is ignored rather than
+        trusted -- IoU in empirical mode is computed from the mask, never read off the wire.
+
+        ``default_frame_id`` supplies the frame from the enclosing ``FramePrediction`` when an
+        instance does not repeat it, so per-frame matching always knows which frame it is on.
+        """
+        if "ground_truth_track_id" in payload:
+            raise SchemaValidationError(
+                "an empirical prediction must not carry 'ground_truth_track_id'; a prediction "
+                "may not claim which ground-truth target it corresponds to"
+            )
+        prediction_id = str(payload["prediction_id"])
+        return cls(
+            prediction_id=prediction_id,
+            frame_id=int(payload.get("frame_id", default_frame_id)),
+            predicted_target_id=str(payload.get("predicted_target_id") or prediction_id),
+            confidence=float(payload["confidence"]),
+            category=str(payload.get("category") or TARGET_CATEGORY),
+            mask=decode_mask(payload.get("mask"), context=f"prediction {prediction_id!r} mask"),
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class FramePrediction:
-    """Everything predicted for one frame. This is the ``ExecutionResult.prediction`` payload."""
+    """Everything predicted for one frame. This is the ``ExecutionResult.prediction`` payload.
+
+    Its instances are precomputed :class:`PredictedInstance`\\ s from synthetic or legacy
+    replay, or empirical :class:`MaskPredictedInstance`\\ s carrying real masks -- a single
+    frame does not mix the two, but a suite may run both kinds across different streams.
+    """
 
     frame_id: int
-    instances: tuple[PredictedInstance, ...] = ()
+    instances: tuple[EvidenceInstance, ...] = ()
 
     def __len__(self) -> int:
         return len(self.instances)
@@ -111,14 +200,16 @@ class FramePrediction:
         A live profile run hands the tracker a ``FramePrediction`` object directly. A replay
         run hands it the same payload after a JSON round-trip, i.e. a plain dict. The task
         owns its payload shape, so knowing how to read both forms belongs here rather than
-        in the executor or the runner.
+        in the executor or the runner. An instance dict carrying a ``mask`` is an empirical
+        prediction; one without is the precomputed form.
         """
         if isinstance(payload, FramePrediction):
             return payload
         if isinstance(payload, Mapping) and "instances" in payload:
+            frame_id = int(payload.get("frame_id", -1))
             return cls(
-                frame_id=int(payload.get("frame_id", -1)),
-                instances=tuple(PredictedInstance.from_dict(item) for item in payload["instances"]),
+                frame_id=frame_id,
+                instances=tuple(_coerce_instance(item, frame_id) for item in payload["instances"]),
             )
         # A mapping without an 'instances' list, or a non-mapping, is a payload from some
         # other task. Refuse it rather than silently reading zero instances, which would let
@@ -127,6 +218,12 @@ class FramePrediction:
             f"cannot read a human-search prediction from {type(payload).__name__}; "
             "expected a FramePrediction or a mapping with an 'instances' list"
         )
+
+
+def _coerce_instance(item: Any, frame_id: int) -> EvidenceInstance:
+    if isinstance(item, Mapping) and "mask" in item:
+        return MaskPredictedInstance.from_dict(item, default_frame_id=frame_id)
+    return PredictedInstance.from_dict(item)
 
 
 @dataclass(frozen=True, slots=True)

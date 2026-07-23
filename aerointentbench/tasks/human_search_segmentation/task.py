@@ -17,7 +17,8 @@ from aerointentbench.tasks.human_search_segmentation.evidence_tracker import (
 from aerointentbench.tasks.human_search_segmentation.ground_truth import (
     TASK_ID,
     HumanSearchGroundTruth,
-    load_human_search_ground_truth,
+    HumanSearchMaskGroundTruth,
+    load_any_ground_truth,
 )
 from aerointentbench.tasks.human_search_segmentation.prediction import (
     SyntheticHumanSearchPredictions,
@@ -54,32 +55,41 @@ class HumanSearchSegmentationTask:
     def create_evaluator(self) -> HumanSearchSegmentationEvaluator:
         return HumanSearchSegmentationEvaluator(self._task_spec)
 
-    def load_ground_truth(self, directory: Path, episode: Episode) -> HumanSearchGroundTruth | None:
-        """Find the answers for this episode's *frame stream*.
+    def load_ground_truth(
+        self, directory: Path, episode: Episode
+    ) -> HumanSearchGroundTruth | HumanSearchMaskGroundTruth | None:
+        """Find the answers for this episode's *frame stream*, in either ground-truth form.
 
         Keyed on the stream, not the episode, so several episodes flying the same scene under
         different battery, network, or contract conditions are scored identically. Every file
         in the directory is read rather than a filename convention being assumed, so renaming
-        a fixture cannot silently unhook it from its episodes.
+        a fixture cannot silently unhook it from its episodes. Interval and mask ground truth
+        may sit side by side; each file declares which it is and is loaded accordingly.
         """
         if not directory.is_dir():
             return None
         for path in sorted(directory.glob("*.json")):
-            ground_truth = load_human_search_ground_truth(path)
+            ground_truth = load_any_ground_truth(path)
             if ground_truth.frame_stream_id == episode.frame_stream_id:
                 return ground_truth
         return None
 
     def create_prediction_source(
-        self, ground_truth: HumanSearchGroundTruth | None, profiles: ProfileCatalog
+        self,
+        ground_truth: HumanSearchGroundTruth | HumanSearchMaskGroundTruth | None,
+        profiles: ProfileCatalog,
     ) -> SyntheticHumanSearchPredictions | None:
-        """Return the synthetic prediction source, or ``None`` without answers to draw from.
+        """Return the synthetic prediction source, or ``None`` when it does not apply.
+
+        The synthetic source draws detections from *interval* ground truth. Mask ground truth
+        belongs to empirical replay -- the predictions are recorded, not synthesised -- so
+        there is nothing to generate and this returns ``None``: a profile run against a mask
+        stream simply gathers no evidence rather than inventing masks it does not have.
 
         The source reads ground truth, which is legitimate -- it stands in for a model that
-        would actually be looking at the scene. What it must never do is let a ground-truth
-        quantity reach a policy, and it does not: the hidden fields it writes are excluded
-        from the tracker's policy summary.
+        would actually be looking at the scene -- but never lets a ground-truth quantity reach
+        a policy: the hidden fields it writes are excluded from the tracker's policy summary.
         """
-        if ground_truth is None:
+        if not isinstance(ground_truth, HumanSearchGroundTruth):
             return None
         return SyntheticHumanSearchPredictions(ground_truth, profiles)

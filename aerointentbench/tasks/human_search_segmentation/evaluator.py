@@ -26,13 +26,27 @@ from aerointentbench.tasks.base import TaskEvaluationResult
 from aerointentbench.tasks.human_search_segmentation.evidence_tracker import (
     HumanSearchEvidenceRecord,
 )
-from aerointentbench.tasks.human_search_segmentation.ground_truth import HumanSearchGroundTruth
+from aerointentbench.tasks.human_search_segmentation.ground_truth import (
+    TARGET_CATEGORY,
+    HumanSearchGroundTruth,
+    HumanSearchMaskGroundTruth,
+)
+from aerointentbench.tasks.human_search_segmentation.masks import mask_iou
+from aerointentbench.tasks.human_search_segmentation.matching import FrameMatching, match_frame
+from aerointentbench.tasks.human_search_segmentation.prediction import MaskPredictedInstance
 
 __all__ = ["HumanSearchSegmentationEvaluator", "QualityScores"]
 
 METRIC_PRECISION: Final = "target_precision"
 METRIC_RECALL: Final = "target_recall"
 METRIC_F1: Final = "target_f1"
+
+#: How quality was measured, recorded in the evaluation details. Absent means the precomputed
+#: scalar path (synthetic profile, or legacy scalar-IoU replay); present means IoU was
+#: computed from real prediction and ground-truth masks. Together with the executor id this
+#: is what distinguishes synthetic profile, legacy replay, and empirical mask replay in a
+#: saved result.
+QUALITY_EVAL_EMPIRICAL_MASK: Final = "empirical_mask_iou"
 
 
 @dataclass(frozen=True, slots=True)
@@ -74,7 +88,14 @@ class QualityScores:
 
 
 class HumanSearchSegmentationEvaluator:
-    """Turns evidence plus ground truth into a standardised task result."""
+    """Turns evidence plus ground truth into a standardised task result.
+
+    Two scoring paths, chosen by the ground-truth form, never by the executor. Interval
+    ground truth carries a precomputed match on every instance, so scoring reads it directly
+    -- unchanged from before, and byte-identical for the profile suite. Per-frame *mask*
+    ground truth carries no match: scoring computes IoU from the prediction and ground-truth
+    masks, matches one-to-one per frame, and deduplicates the finds by hidden track ID.
+    """
 
     __slots__ = ("_task_spec",)
 
@@ -84,20 +105,35 @@ class HumanSearchSegmentationEvaluator:
     def evaluate(
         self,
         evidence: HumanSearchEvidenceRecord,
-        ground_truth: HumanSearchGroundTruth,
+        ground_truth: HumanSearchGroundTruth | HumanSearchMaskGroundTruth,
         contract: Contract,
     ) -> TaskEvaluationResult:
         scores = self.score(evidence, ground_truth)
+        details: dict[str, Any] = {
+            **scores.to_dict(),
+            "processed_frames": evidence.processed_frames,
+        }
+        if isinstance(ground_truth, HumanSearchMaskGroundTruth):
+            details["quality_evaluation"] = QUALITY_EVAL_EMPIRICAL_MASK
         return TaskEvaluationResult.against_contract(
             contract,
             value=scores.value_of(contract.quality_metric),
-            details={**scores.to_dict(), "processed_frames": evidence.processed_frames},
+            details=details,
         )
 
     def score(
-        self, evidence: HumanSearchEvidenceRecord, ground_truth: HumanSearchGroundTruth
+        self,
+        evidence: HumanSearchEvidenceRecord,
+        ground_truth: HumanSearchGroundTruth | HumanSearchMaskGroundTruth,
     ) -> QualityScores:
         """Compute all three metrics. Exposed separately so tests can assert the counts."""
+        if isinstance(ground_truth, HumanSearchMaskGroundTruth):
+            return self._score_empirical(evidence, ground_truth)
+        return self._score_precomputed(evidence, ground_truth)
+
+    def _score_precomputed(
+        self, evidence: HumanSearchEvidenceRecord, ground_truth: HumanSearchGroundTruth
+    ) -> QualityScores:
         rule = self._task_spec.matching_rule
 
         matched_targets: set[str] = set()
@@ -106,12 +142,13 @@ class HumanSearchSegmentationEvaluator:
 
         for instance in evidence.instances:
             predicted_identities.add(instance.predicted_target_id)
-            if instance.ground_truth_track_id is None:
+            ground_truth_track_id = getattr(instance, "ground_truth_track_id", None)
+            if ground_truth_track_id is None:
                 continue
-            if not rule.matches(instance.mask_iou):
+            if not rule.matches(getattr(instance, "mask_iou", 0.0)):
                 # Seen, but not segmented well enough to count as found.
                 continue
-            matched_targets.add(instance.ground_truth_track_id)
+            matched_targets.add(ground_truth_track_id)
             matched_identities.add(instance.predicted_target_id)
 
         total_targets = len(ground_truth)
@@ -128,6 +165,111 @@ class HumanSearchSegmentationEvaluator:
             predicted_targets=len(predicted_identities),
             false_positive_targets=false_positives,
         )
+
+    def match(
+        self,
+        evidence: HumanSearchEvidenceRecord,
+        ground_truth: HumanSearchMaskGroundTruth,
+    ) -> tuple[FrameMatching, ...]:
+        """Match every frame that has predictions or scored ground truth, one-to-one.
+
+        Exposed so the matching that produces the metrics is inspectable -- a test, or a
+        debug dump, can read the exact IoU that earned each match rather than only the totals.
+        Ignored ground-truth regions take no part in matching here; their effect on false
+        positives is applied during scoring.
+        """
+        category = self._task_spec.target_type
+        rule = self._task_spec.matching_rule
+        predictions_by_frame = self._predictions_by_frame(evidence)
+
+        matchings: list[FrameMatching] = []
+        for frame_id in self._frame_ids(predictions_by_frame, ground_truth):
+            targets = [
+                target
+                for target in ground_truth.instances_at(frame_id)
+                if not target.ignore and target.category == category
+            ]
+            matchings.append(
+                match_frame(frame_id, predictions_by_frame.get(frame_id, []), targets, rule=rule)
+            )
+        return tuple(matchings)
+
+    def _score_empirical(
+        self, evidence: HumanSearchEvidenceRecord, ground_truth: HumanSearchMaskGroundTruth
+    ) -> QualityScores:
+        category = self._task_spec.target_type or TARGET_CATEGORY
+        rule = self._task_spec.matching_rule
+        predictions_by_frame = self._predictions_by_frame(evidence)
+
+        found_tracks: set[str] = set()
+        false_positive_predictions = 0
+        for frame_id in self._frame_ids(predictions_by_frame, ground_truth):
+            predictions = predictions_by_frame.get(frame_id, [])
+            instances = ground_truth.instances_at(frame_id)
+            scored = [g for g in instances if not g.ignore and g.category == category]
+            ignored = [g for g in instances if g.ignore and g.category == category]
+
+            matching = match_frame(frame_id, predictions, scored, rule=rule)
+            found_tracks |= matching.matched_track_ids
+
+            matched_ids = {match.prediction_id for match in matching.matches}
+            for prediction in predictions:
+                if prediction.prediction_id in matched_ids:
+                    continue
+                # A prediction that fell on an ignore region is neither a find nor a fault:
+                # the region was flagged as one the mission is not scored on, so it absorbs
+                # the prediction rather than charging it as a false positive.
+                if any(rule.matches(mask_iou(prediction.mask, region.mask)) for region in ignored):
+                    continue
+                false_positive_predictions += 1
+
+        total_targets = len(ground_truth.target_track_ids(category))
+        true_positives = len(found_tracks)
+
+        # Target-level counting, per the task specification: a track found in any frame is one
+        # found target (deduplicated by hidden track ID); every prediction that matched nothing
+        # (and no ignore region) is one false positive; every never-matched target is one miss.
+        recall = _ratio(true_positives, total_targets, empty=1.0)
+        precision = _ratio(true_positives, true_positives + false_positive_predictions, empty=1.0)
+        return QualityScores(
+            target_precision=precision,
+            target_recall=recall,
+            target_f1=_harmonic_mean(precision, recall),
+            matched_targets=true_positives,
+            total_targets=total_targets,
+            predicted_targets=true_positives + false_positive_predictions,
+            false_positive_targets=false_positive_predictions,
+        )
+
+    def _predictions_by_frame(
+        self, evidence: HumanSearchEvidenceRecord
+    ) -> dict[int, list[MaskPredictedInstance]]:
+        """Group the target-category mask predictions by frame, rejecting the wrong kind.
+
+        A mask ground-truth stream must be paired with an empirical replay set: a precomputed
+        instance here carries no mask to compare, and silently scoring it as "found nothing"
+        would hide the misconfiguration.
+        """
+        category = self._task_spec.target_type
+        by_frame: dict[int, list[MaskPredictedInstance]] = {}
+        for instance in evidence.instances:
+            if not isinstance(instance, MaskPredictedInstance):
+                raise SchemaValidationError(
+                    "empirical mask scoring needs mask predictions, but the evidence holds a "
+                    f"{type(instance).__name__}; pair a mask ground-truth stream with an "
+                    "empirical replay set, not synthetic or legacy-scalar predictions"
+                )
+            if instance.category != category:
+                continue
+            by_frame.setdefault(instance.frame_id, []).append(instance)
+        return by_frame
+
+    @staticmethod
+    def _frame_ids(
+        predictions_by_frame: dict[int, list[MaskPredictedInstance]],
+        ground_truth: HumanSearchMaskGroundTruth,
+    ) -> list[int]:
+        return sorted(set(predictions_by_frame) | {frame.frame_id for frame in ground_truth.frames})
 
 
 def _ratio(numerator: int, denominator: int, *, empty: float) -> float:

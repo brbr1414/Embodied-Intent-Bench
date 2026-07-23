@@ -36,14 +36,32 @@ from aerointentbench.tasks.human_search_segmentation.evidence_tracker import (
     HumanSearchEvidenceTracker,
 )
 from aerointentbench.tasks.human_search_segmentation.ground_truth import (
+    TARGET_CATEGORY,
     TASK_ID,
+    FrameGroundTruth,
     HumanSearchGroundTruth,
+    HumanSearchMaskGroundTruth,
+    MaskTarget,
     TargetTrack,
+    load_any_ground_truth,
     load_human_search_ground_truth,
+    load_human_search_mask_ground_truth,
+)
+from aerointentbench.tasks.human_search_segmentation.masks import (
+    BinaryMask,
+    decode_mask,
+    mask_iou,
+)
+from aerointentbench.tasks.human_search_segmentation.matching import (
+    FrameMatching,
+    Match,
+    match_frame,
 )
 from aerointentbench.tasks.human_search_segmentation.prediction import (
     DEFAULT_TIER_BEHAVIOUR,
+    EvidenceInstance,
     FramePrediction,
+    MaskPredictedInstance,
     PredictedInstance,
     SyntheticHumanSearchPredictions,
     TierBehaviour,
@@ -52,17 +70,31 @@ from aerointentbench.tasks.human_search_segmentation.task import HumanSearchSegm
 
 __all__ = [
     "DEFAULT_TIER_BEHAVIOUR",
+    "TARGET_CATEGORY",
     "TASK_ID",
+    "BinaryMask",
+    "EvidenceInstance",
+    "FrameGroundTruth",
+    "FrameMatching",
     "FramePrediction",
     "HumanSearchEvidenceRecord",
     "HumanSearchEvidenceTracker",
     "HumanSearchGroundTruth",
+    "HumanSearchMaskGroundTruth",
     "HumanSearchSegmentationEvaluator",
     "HumanSearchSegmentationTask",
+    "MaskPredictedInstance",
+    "MaskTarget",
+    "Match",
     "PredictedInstance",
     "QualityScores",
     "SyntheticHumanSearchPredictions",
     "TargetTrack",
     "TierBehaviour",
+    "decode_mask",
+    "load_any_ground_truth",
     "load_human_search_ground_truth",
+    "load_human_search_mask_ground_truth",
+    "mask_iou",
+    "match_frame",
 ]

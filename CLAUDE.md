@@ -162,3 +162,13 @@ unchanged. `replay` serves precomputed `frame × config` records from `data/pred
 resolved by `episode_id`, and is the bridge to real predictions. `real_segmentation` is a
 V1 stub whose construction raises. The backend that ran is recorded as `executor_id`, read
 from the executor object so it cannot be mislabelled; do not add a parallel name parameter.
+
+**Empirical mask replay** (`docs/v1_spec.md` §4.15) lets replay predictions carry real
+instance masks and ground truth carry per-frame masks with track IDs; the evaluator computes
+mask IoU, matches one-to-one per frame, and deduplicates finds by hidden track ID. Which
+scoring path runs is decided by the **ground-truth form** (mask `frames` vs visibility
+`targets`), never by the executor — `EpisodeRunner` still contains no mask/IoU logic, and all
+of it lives in the human-search task. Masks stay pure-Python (no numpy/scipy): the zero-runtime-dependency
+rule is not negotiable, so the matcher is a documented deterministic greedy, not Hungarian.
+The masks shipped under `data/examples/empirical_replay/` are a **synthetic correctness
+example**; no real model or dataset is included, and `real_segmentation` is still only a stub.

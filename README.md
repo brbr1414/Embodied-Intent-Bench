@@ -22,7 +22,7 @@ control, or open-ended language understanding.
 → state and evidence updates → termination → metrics JSON. Runs on CPU with **zero runtime
 dependencies**; re-running produces a byte-identical result.
 
-454 tests, clean under `ruff check` and `ruff format`. Known limitations are recorded in
+519 tests, clean under `ruff check` and `ruff format`. Known limitations are recorded in
 [`docs/v1_spec.md`](docs/v1_spec.md) §16 rather than left implicit.
 
 ## The loop
@@ -108,8 +108,8 @@ default; existing commands are unaffected.
 
 | Backend | What it does | Numbers are |
 |---|---|---|
-| `profile` (default) | Synthesises latency, energy, and communication from a per-platform profile, plus the remote-latency network model | **synthetic** |
-| `replay` | Serves precomputed `frame × config` records from `data/predictions/`, resolved by the episode's ID. The intended bridge to real predictions | replayed |
+| `profile` (default) | Synthesises latency, energy, and communication from a per-platform profile, plus the remote-latency network model. Quality comes from the synthetic prediction model | **synthetic** |
+| `replay` | Serves precomputed `frame × config` records from `data/predictions/`, resolved by the episode's ID. The intended bridge to real predictions; records may carry real prediction **masks** | replayed |
 | `real_segmentation` | V1 **stub**; selecting it fails immediately with a clear message | — |
 
 ```bash
@@ -130,6 +130,43 @@ real hardware capture would fill; the executor and loader do not change when it 
 
 The executor that produced a result is recorded in the result JSON as `executor_id`, read
 from the executor object itself so it cannot disagree with what actually ran.
+
+### Empirical mask replay
+
+Profile mode generates quality synthetically: a per-tier probability decides whether a
+target is detected and a precomputed scalar stands in for mask overlap. **Empirical mask
+replay** removes the stand-in. Replay predictions carry actual instance **masks**, hidden
+ground truth carries per-frame **masks with track IDs**, and the evaluator computes mask IoU
+itself, matches predictions to targets **one-to-one** per frame, and deduplicates the finds
+by hidden track ID into unique-target precision, recall, and F1.
+
+The distinction from profile is not the executor alone — it is the ground truth. A stream
+whose `ground_truth/` file declares per-frame `frames` of masks is scored by IoU; one
+declaring visibility `targets` is scored by the precomputed scalar. Predictions never carry a
+ground-truth track ID, IoU is computed from the masks and never read off the wire, and the
+policy sees none of it. A result scored this way is tagged `quality_evaluation:
+"empirical_mask_iou"` in its quality details, so a saved result distinguishes synthetic
+profile, legacy scalar replay, and empirical mask replay.
+
+A tiny, hand-verifiable example ships under `data/examples/empirical_replay/` — a few 8×8
+frames with two tracked people, one exact match, one partial match above threshold, one
+below-threshold detection, one false positive, and one missed target. Run it through the
+normal CLI:
+
+```bash
+python -m aerointentbench.run_benchmark \
+  --data-root data/examples/empirical_replay \
+  --episode data/examples/empirical_replay/episodes/episode.json \
+  --contract data/examples/empirical_replay/contracts/contract.json \
+  --policy rule_based --executor replay \
+  --output results/empirical_example.json
+# -> target_precision 0.5, target_recall 0.667, target_f1 0.571,
+#    matched_targets 2, total_targets 3, false_positive_targets 2
+```
+
+This branch adds no real model and no dataset: the masks are a **synthetic correctness
+example**, and `real_segmentation` remains a stub. Empirical replay is where recorded
+`frame × config` masks from a real capture would eventually plug in unchanged.
 
 ### Measured baselines
 
