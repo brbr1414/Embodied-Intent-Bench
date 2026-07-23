@@ -22,7 +22,7 @@ control, or open-ended language understanding.
 → state and evidence updates → termination → metrics JSON. Runs on CPU with **zero runtime
 dependencies**; re-running produces a byte-identical result.
 
-524 tests, clean under `ruff check` and `ruff format`. Known limitations are recorded in
+557 tests, clean under `ruff check` and `ruff format`. Known limitations are recorded in
 [`docs/v1_spec.md`](docs/v1_spec.md) §16 rather than left implicit.
 
 ## The loop
@@ -183,6 +183,50 @@ python -m aerointentbench.run_benchmark \
 This branch adds no real model and no dataset: the masks are a **synthetic correctness
 example**, and `real_segmentation` remains a stub. Empirical replay is where recorded
 `frame × config` masks from a real capture would eventually plug in unchanged.
+
+### Building a bundle from real data
+
+You run any model **outside** the benchmark, write its outputs to files, and a builder
+converts them into a self-contained replay bundle the ordinary CLI runs unchanged. The
+builder executes no model and measures no hardware — it ingests, validates, and packages.
+
+Source formats (all stdlib, no image-decoding dependency):
+
+| Source | Format | Contains |
+|---|---|---|
+| Ground truth | JSON `{instances:[…]}` | per instance: `frame_id`, `track_id`, `category`, `mask` `{height,width,rows}`, optional `ignore` |
+| Predictions (per config) | JSON Lines | per line: `frame_id`, `prediction_id`, `category`, `confidence`, `mask` — **never** a GT track id or `mask_iou` |
+| Measurements (per config) | CSV | `frame_id, success, latency_s, compute_energy_j, upload_mb, download_mb, failure_reason` — latency/energy never inferred from a blank cell |
+
+A versioned **manifest** ties them together and declares the mission scaffolding and honest
+**provenance** (`data_origin`, per-config `prediction_provenance` / `measurement_provenance`)
+so a bundle can never label a hand-authored or estimated value as measured. **Coverage** is
+explicit: `strict` (default) requires a measurement for every declared `frame × config`;
+`sparse` turns a missing pair into an explicit failed record — never a silent omission.
+
+```bash
+# convert sources -> a validated, self-contained bundle
+python -m aerointentbench.tools.build_empirical_bundle \
+  --manifest data/examples/empirical_source/manifest.json \
+  --output data/generated/example_bundle --validate
+
+# validate an existing bundle independently
+python -m aerointentbench.tools.validate_empirical_bundle --bundle data/generated/example_bundle
+
+# then run it with the ordinary benchmark command — no custom flags
+python -m aerointentbench.run_benchmark \
+  --data-root data/generated/example_bundle \
+  --episode data/generated/example_bundle/episodes/episode.json \
+  --contract data/generated/example_bundle/contracts/contract.json \
+  --policy rule_based --executor replay --output results/example.json
+# -> target_recall 0.667, detection_precision 0.6 (built from the committed source fixture)
+```
+
+Builds are **deterministic**: records ordered by `(frame_id, config_id)`, JSON written
+sorted, and the only non-deterministic value — the build timestamp — isolated to one
+provenance field (`--created-at` pins it). Every generated file's SHA-256 is recorded in
+`provenance.json`. The committed source fixture under `data/examples/empirical_source/` is
+**synthetic and tests conversion correctness only** — no model, no dataset.
 
 ### Measured baselines
 

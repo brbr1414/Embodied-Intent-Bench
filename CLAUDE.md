@@ -151,6 +151,11 @@ python -m venv .venv && .venv/bin/pip install -e ".[dev]"   # setup
 .venv/bin/python -m aerointentbench.tools.record_replay \
   --episode data/episodes/episode_001.json --output data/predictions/synthetic_replay_episode_001.json
 
+# convert external empirical data into a runnable replay bundle, then validate it
+.venv/bin/python -m aerointentbench.tools.build_empirical_bundle \
+  --manifest data/examples/empirical_source/manifest.json --output data/generated/example_bundle --validate
+.venv/bin/python -m aerointentbench.tools.validate_empirical_bundle --bundle data/generated/example_bundle
+
 # regenerate the pinned reference results (review the diff!)
 .venv/bin/python -m tests.test_reference_suite --update
 ```
@@ -181,3 +186,14 @@ per-frame masks carry no persistent predicted-track identity — and appear as `
 frame-level FP; that mixed-unit value was the bug `fix/v1-empirical-metric-semantics` removed.
 The precomputed path (profile, legacy replay) is untouched and still yields `QualityScores`
 with `target_precision`/`target_f1`.
+
+**The bundle builder** (`aerointentbench.tools.build_empirical_bundle` +
+`validate_empirical_bundle`, `docs/v1_spec.md` §4.16) converts external data — a manifest,
+ground-truth JSON, per-config prediction JSONL, and measurement CSV — into a self-contained
+replay bundle the ordinary CLI runs unchanged. It is **data ingestion only**: it executes no
+model and measures no hardware, so keep model/dataset logic out of it and out of the core.
+Predictions may not carry a GT track id or a trusted `mask_iou`; measurements are never
+inferred from a blank cell; provenance must stay honest (never label hand-authored or
+estimated numbers as `measured`). Builds are deterministic except one provenance timestamp
+(`--created-at` pins it). The committed `data/examples/empirical_source/` is synthetic and
+tests conversion correctness only — still no real model or dataset in the repo.

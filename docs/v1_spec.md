@@ -541,7 +541,46 @@ with differing latency and energy. It scores, by hand and in code, `target_recal
 total_predictions 5`), `false_positive_detections 2`, `false_positives_per_minute 40.0`, and
 `target_f1 null`.
 
-### 4.16 Shipped fixtures
+### 4.16 Building empirical bundles from external data
+
+§4.15 consumes a hand-authored bundle. The **bundle builder**
+(`aerointentbench.tools.build_empirical_bundle`) is the bridge from *real* externally
+produced data into that same format, so a researcher can run any model outside the benchmark
+and convert its outputs without touching `EpisodeRunner`, `ReplayExecutor`, or the evaluator.
+It executes no model and measures no hardware — it ingests, validates, and packages.
+
+**Inputs.** A versioned manifest points at three source families (all stdlib-parseable, no
+image-decoding dependency): a ground-truth JSON of per-frame mask instances; per-configuration
+predictions as JSON Lines (`frame_id`, `prediction_id`, `category`, `confidence`, `mask` —
+rejected if they carry a ground-truth track id or an on-the-wire `mask_iou`); and
+per-configuration measurements as CSV (`frame_id, success, latency_s, compute_energy_j,
+upload_mb, download_mb, failure_reason`). A blank required latency or energy cell is an error,
+never a silent zero. The manifest also carries the mission scaffolding (platform, path,
+network, contract — with defaults) and honest **provenance**: `data_origin`, and per config
+`prediction_provenance` and `measurement_provenance`, so a hand-authored or estimated value is
+never packaged as `measured`.
+
+**Output.** A self-contained data root — configs, platform, profiles, path, network trace,
+task spec, episode, contract, hidden mask ground truth, one replay record set, a frame
+manifest, and a `provenance.json` — that the ordinary CLI runs with `--executor replay` and
+no new flags. Policy-facing nominal profile costs are means of the supplied measurements,
+marked as derived scaffolding, not a separate measurement.
+
+**Coverage** is explicit. `strict` (the default) requires a measurement for every declared
+`frame × config`; `sparse` converts a declared-but-missing pair into an explicit failed
+replay record (`no_prediction_available`), matching `ReplayExecutor`'s own gap semantics. A
+missing pair is never silently dropped.
+
+**Determinism and safety.** Records are ordered by `(frame_id, config_id)`, ground truth by
+`(frame_id, track_id)`, JSON written sorted; two builds of the same sources are byte-identical
+but for one provenance `created_at` field (pinned with `--created-at`). Every generated file's
+SHA-256 is recorded in the provenance manifest. Source paths resolve under the manifest's
+directory and a `..` that escapes it is rejected. `validate_empirical_bundle` re-checks a
+built bundle independently — schemas, config references, mask dimensions, no GT identity in
+predictions, finite non-negative costs, coverage, and provenance counts and hashes against
+what is on disk — accumulating every error rather than stopping at the first.
+
+### 4.17 Shipped fixtures
 
 | File | Contents |
 |---|---|
@@ -557,6 +596,7 @@ total_predictions 5`), `false_positive_detections 2`, `false_positives_per_minut
 | `data/ground_truth/synthetic_human_search_stream_001.json` | 20 targets over STREAM_001: 4 sustained, 6 brief, 10 fleeting |
 | `data/episodes/episode_00{1,2,3}*.json` | One episode per network condition |
 | `data/examples/empirical_replay/` | A self-contained mini data root for §4.15: mask ground truth, a mask replay set, and its episode/contract. Synthetic correctness example, not a dataset |
+| `data/examples/empirical_source/` | Source-format inputs for §4.16 (manifest, ground-truth JSON, prediction JSONL, measurement CSV) that the bundle builder converts into a runnable bundle. Synthetic; tests conversion correctness only |
 
 Files whose numbers are invented rather than chosen — platform profiles, network traces,
 and later configuration profiles, predictions, and ground truth — are named `synthetic_*`
