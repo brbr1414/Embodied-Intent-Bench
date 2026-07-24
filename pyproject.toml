@@ -26,6 +26,10 @@ dependencies = []
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0", "ruff>=0.6"]
+# V2 visual closed loop only. The V1 core stays runtime-dependency-free; nothing under
+# aerointentbench/ imports these unless the aerointentbench.v2 subpackage is used.
+# rasterio is needed only for GeoTIFF worlds (windowed reads); PNG/JPEG worlds need Pillow.
+v2 = ["numpy>=2.0", "pillow>=10.0", "rasterio>=1.4"]
 
 [project.scripts]
 aerointentbench = "aerointentbench.run_benchmark:main"

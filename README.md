@@ -32,6 +32,39 @@ real-segmentation pilot *tooling* (which has run no real model — see
 `experiments/real_segmentation_pilot/STATUS.md`). See [`docs/v1_spec.md`](docs/v1_spec.md)
 §14.1 for the frozen schema registry.
 
+## V2: the visual closed loop
+
+**V2** ([`docs/v2_design.md`](docs/v2_design.md)) inserts a real visual world between the
+mission state and the perception executor — the deliberate bridge between V1's abstract
+replay and a future physical (V3) simulator:
+
+```
+2D aerial world (GeoTIFF) → predefined UAV trajectory → position-dependent image crop
+→ configuration-selection policy (unchanged V1 interface) → image-based executor
+→ prediction + simulated latency → the UAV keeps moving; busy executors skip observations
+→ capture-time ground truth scores the prediction → mission-level V1 empirical metrics
+```
+
+The world is a large OpenAerialMap orthomosaic read **window by window** (never loaded
+whole, never sent whole to a model); targets are **synthetic rescue markers** composited at
+render time with exact semantic/instance ground truth; two lightweight executors
+(`fast_weak` / `slow_strong`) trade configured latency against segmentation quality, and the
+trade-off shows up in the mission: the strong model skips 2 of every 3 observations, the
+weak one sees everything and pays in false positives. Latency/energy are **simulated**;
+V2 validates architecture and closed-loop semantics, **not** real UAV perception
+performance.
+
+```bash
+pip install -e ".[dev,v2]"        # V2 extras: numpy, pillow, rasterio (V1 core stays zero-dep)
+python -m aerointentbench.v2.cli validate --scenario data/v2_scenarios/demo_img1_lawnmower.json
+python -m aerointentbench.v2.cli overview --scenario data/v2_scenarios/demo_img1_lawnmower.json --output results/v2
+python -m aerointentbench.v2.cli run --scenario data/v2_scenarios/demo_img1_lawnmower.json \
+  --policy always_strong --output results/v2 --debug-observations 3
+```
+
+The large rasters under `src/v2_img/` are local-only (gitignored); their provenance and the
+`img_1`/`img_2` mapping live in `data/v2_scenarios/aerial_sources.json`.
+
 ## The loop
 
 ```

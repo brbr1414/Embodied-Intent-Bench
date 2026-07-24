@@ -55,15 +55,21 @@ def _imported_root_modules(source: str) -> set[str]:
 
 
 def test_package_has_no_third_party_runtime_dependencies() -> None:
-    """V1 must run without a GPU and without heavy ML packages.
+    """The V1 core must run without a GPU and without heavy ML packages.
 
     ``pyproject.toml`` declares zero runtime dependencies; this asserts the source
     actually honours that, so a stray ``import numpy`` fails here rather than at a
     user's install. Checked statically over every module in the package, which keeps
     the test independent of what other tests happened to import first.
+
+    The ``aerointentbench.v2`` subpackage is the one deliberate exception: it is the
+    visual simulator behind the optional ``[v2]`` extra, and its own boundary is pinned
+    by :func:`test_v2_subpackage_only_uses_its_declared_extras` below.
     """
     package_root = pathlib.Path(aerointentbench.__file__).parent
-    modules = sorted(package_root.rglob("*.py"))
+    modules = sorted(
+        p for p in package_root.rglob("*.py") if "v2" not in p.relative_to(package_root).parts
+    )
     assert modules, "expected to find package modules to scan"
 
     allowed = sys.stdlib_module_names | {"aerointentbench"}
@@ -73,6 +79,31 @@ def test_package_has_no_third_party_runtime_dependencies() -> None:
                 f"{module_path.relative_to(package_root.parent)} imports non-stdlib module "
                 f"{root!r}; V1 declares zero runtime dependencies"
             )
+
+
+def test_v2_subpackage_only_uses_its_declared_extras() -> None:
+    """The optional V2 simulator may use exactly its declared extras -- nothing heavier.
+
+    numpy/Pillow/rasterio are the ``[v2]`` optional dependencies; PyTorch and friends
+    stay banned everywhere. And the V1 package must not import V2 eagerly: installing
+    aerointentbench without the extra has to keep working, so ``aerointentbench/__init__``
+    (scanned by the core test above) must never pull ``aerointentbench.v2`` in.
+    """
+    package_root = pathlib.Path(aerointentbench.__file__).parent
+    v2_root = package_root / "v2"
+    modules = sorted(v2_root.rglob("*.py"))
+    assert modules, "expected to find v2 modules to scan"
+
+    allowed = sys.stdlib_module_names | {"aerointentbench", "numpy", "PIL", "rasterio"}
+    for module_path in modules:
+        for root in _imported_root_modules(module_path.read_text(encoding="utf-8")):
+            assert root in allowed, (
+                f"{module_path.relative_to(package_root.parent)} imports {root!r}, which is "
+                "not part of the declared [v2] extras"
+            )
+
+    core_init = (package_root / "__init__.py").read_text(encoding="utf-8")
+    assert "v2" not in core_init, "the V1 package must not import the v2 subpackage eagerly"
 
 
 def test_cli_entry_point_is_importable() -> None:

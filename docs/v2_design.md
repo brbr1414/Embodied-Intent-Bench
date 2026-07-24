@@ -1,0 +1,168 @@
+# AeroIntentBench V2 — the minimal visual closed loop
+
+V2 inserts a real visual world between the mission state and the perception executor.
+It is the deliberate bridge between the abstract V1 benchmark and a future physical
+(V3) simulation — **not** a realistic UAV simulator, and **not** a source of real-world
+perception performance numbers.
+
+## 1. Version progression
+
+| | V1 (frozen) | V2 (this) | Future V3 |
+|---|---|---|---|
+| World | abstract frame counter | large 2D aerial raster | high-fidelity 3D environment |
+| UAV | path progress scalar | predefined 2D trajectory, fixed altitude/speed | flight dynamics |
+| Observation | none (replayed records) | position-dependent image crop | rendered/real camera |
+| Executor | profile/replay records | lightweight image-based models | real perception models & strategies |
+| Latency | profile value advances a clock | configured latency moves the UAV and skips observations | measured on hardware |
+| Energy/network | synthetic formulas | configured per call (simulated) | hardware & network measurements |
+| Validates | benchmark logic, schemas, metrics | architecture, interfaces, closed-loop semantics, policy trade-offs | physical mission evaluation |
+
+V1 flow: `contract + state → policy → replayed profile result → mathematical update →
+evaluation`. V1 remains fully functional — `aerointentbench.run_benchmark` and every V1
+schema, fixture, and test are untouched.
+
+V2 flow (authoritative):
+
+```
+2D aerial world → predefined UAV trajectory → position-dependent image crop
+→ configuration-selection policy → image-based executor → prediction + latency
+→ movement + mission-state update → next position-dependent observation
+```
+
+## 2. What V2 answers
+
+- Observations change as the UAV moves (the crop is computed from `world image + UAV
+  position + camera footprint` at render time — never a directory of pre-generated
+  frames).
+- A policy selects between model-strategies mid-mission on the **unchanged V1 policy
+  interface**.
+- The executor processes actual image content; its prediction depends on RGB.
+- A slower model skips later observations; a target can be missed because the UAV
+  moved during inference.
+- Accuracy / latency / battery / deadline / communication trade-offs surface in
+  mission-level metrics with the frozen V1 empirical vocabulary.
+- The 2D simulator sits behind narrow interfaces (`WorldSource`, `Trajectory`,
+  `CameraRenderer`, `ImageExecutor`) so a 3D backend can replace it without
+  redesigning the benchmark.
+
+## 3. Architecture
+
+```
+aerointentbench/v2/          (optional subpackage; extras: aerointentbench[v2])
+  scenario.py    V2Scenario schema (scenario_schema_version "2.0", strict validation)
+  world.py       WorldSource backends: RasterioWorld (GeoTIFF, windowed reads),
+                 ImageWorld (PNG/JPEG), ArrayWorld (tests)
+  trajectory.py  PolylineTrajectory + lawnmower generator; position_at(t)
+  objects.py     ObjectLayer: synthetic targets/distractors, semantic+instance GT
+  camera.py      CameraRenderer → Observation (RGB + evaluator-only GT)
+  executors.py   fast_weak / slow_strong image executors + extension point
+  evaluation.py  MissionEvaluator (V1 empirical metric semantics)
+  runner.py      MissionRunner: the canonical closed loop
+  visualize.py   overview + observation debug panels (headless PNG)
+  cli.py         validate / overview / run
+```
+
+**Dependency boundary.** The V1 core keeps zero runtime dependencies; only
+`aerointentbench.v2` uses numpy/Pillow (+rasterio for GeoTIFF), declared as the
+optional `[v2]` extra and pinned by `tests/test_package_skeleton.py`. Nothing in the
+V1 package imports V2.
+
+## 4. Coordinate system
+
+Local metric coordinates: origin at the raster's **top-left**, x right, y down, world
+units in **meters**, image units in **pixels**; `meters_per_pixel` is the single scale.
+Field names carry unit suffixes (`position_m`, `speed_mps`, `width_px`).
+
+For the shipped GeoTIFFs (EPSG:3857) the scenario's `meters_per_pixel` is validated
+against the raster's own transform (±5 %). Web Mercator carries the projection's
+*nominal* metre — true ground metres differ by cos(latitude); V2 treats the nominal
+metre as the local world metre and records the CRS/transform as provenance only. A
+non-georeferenced image requires `meters_per_pixel` in the scenario.
+
+## 5. The closed loop (canonical semantics)
+
+Observations are scheduled every `observation_interval_s` (0.0, 1.0, 2.0 …). Per
+processed observation: capture position ← `trajectory.position_at(capture_time)`;
+render the crop; build the V1 `RuntimeState`; policy selects `config_id` (invalid
+actions substitute the scenario's **explicit** `fallback_config_id` via the V1
+`ActionValidator`); the executor runs on the RGB; `completion_time = capture_time +
+mission_latency_s`; the UAV keeps moving (completion position is evaluated at
+completion time); scheduled captures that passed while busy are recorded **skipped**
+(never queued); the prediction is scored against the **capture-time** ground truth
+(never a re-render at completion); battery = flight_power × elapsed + per-call energy;
+terminate on path end / deadline / battery floor / unrecoverable executor failure.
+
+Example: capture at 10.0 s with 2.4 s latency → completes 12.4 s; the 11.0 s and
+12.0 s captures are skipped; the next processed capture is 13.0 s.
+
+## 6. Synthetic objects and ground truth
+
+Targets are **synthetic rescue-target markers, not realistic humans**: a
+high-visibility orange body (optionally striped) that the lightweight executors can
+find from RGB alone. Distractors wear similar-but-imperfect colours that fool the weak
+gate but not the strong one. The source raster is never modified; objects are
+composited per crop with rotation, boundary clipping, deterministic z-order, alpha
+blending, and exact semantic (0/1/2 = background/target/distractor) and instance
+(1-based scenario ordinal) masks. GT fields live on the `Observation` for the
+evaluator only — the policy and the executor never see them.
+
+## 7. Executors and honesty labels
+
+`fast_weak` (downsample + coarse threshold, low configured latency, ragged, extra
+false positives) versus `slow_strong` (full-res selective chroma + morphology +
+small-component removal, high configured latency, clean masks). Every result labels
+its quantities: `mission_latency_s` **simulated** (drives the clock),
+`measured_wall_clock_s` **measured** (diagnostic only), `energy_j` **simulated**,
+`communication_mb` **configured** (local, 0 in V2). Simulated values are never
+presented as hardware measurements.
+
+Extension point: a future heavy backend (MobileSAM / SAM2 / detector+SAM, FP16/INT8,
+remote) implements `run(rgb) → ImageExecutionResult`, registers a new executor `kind`,
+and lives in an optional module — the core never imports PyTorch.
+
+## 8. Evaluation
+
+The frozen V1 empirical vocabulary, unchanged: `target_recall` (unique targets found /
+total, deduplicated by hidden object id — canonical), `detection_precision` (matched /
+total predicted components), `false_positive_detections`,
+`false_positives_per_processed_minute` and `false_positives_per_mission_minute`
+(denominator-named), `target_f1 = null` (no persistent predicted-track identity).
+Matching is the V1 discipline: IoU matrix, scenario threshold, greedy one-to-one.
+V2 adds diagnostics: processed/skipped counts, targets encountered / detected /
+missed-while-visible, path completion, termination reason.
+
+## 9. Demo scenario and measured behaviour
+
+`data/v2_scenarios/demo_img1_lawnmower.json`: img_1 (OpenAerialMap, 0.0295 m/px), a
+conservative 80×30 m lawnmower ROI at (270–350, 225–255) m, 24×18 m footprint at
+256×192 px, 3 synthetic targets + 3 distractors, two executors (0.4 s vs 2.5 s), one
+`target_recall ≥ 0.6` contract, deterministic seed. Observed (synthetic, low-fidelity):
+
+| policy | processed | skipped | recall | precision | FPs | battery | time |
+|---|---|---|---|---|---|---|---|
+| always_fast | 70 | 0 | 1.000 | 0.435 | 26 | 0.522 | 70.0 s |
+| always_strong | 24 | **48** | 1.000 | **1.000** | 0 | 0.503 | 71.5 s |
+| rule_based | 70 | 0 | 1.000 | 0.435 | 26 | 0.522 | 70.0 s |
+
+The closed-loop trade-off is visible: the strong model skips two of every three
+observations yet stays perfect on precision; the weak model sees everything and pays
+in false positives. **These numbers validate the loop, not any perception model.**
+
+## 10. Known limitations (deliberate)
+
+No flight dynamics, wind, attitude, or path planning (the path is predefined; the
+policy controls only the model-strategy). Orthographic camera, fixed altitude —
+altitude does not affect the image. Latency/energy/communication are configured, not
+measured. Targets are synthetic markers. The constant network is policy-visible
+decoration. `rule_based` is a V1 policy reasoning over tiers — it is not tuned for V2.
+Rasters are local-only (provenance in `data/v2_scenarios/aerial_sources.json`); large
+files are gitignored.
+
+## 11. Next steps
+
+Toward real models: implement a heavy `ImageExecutor` kind in an optional module
+(e.g. MobileSAM), measure real wall-clock as *its own labelled quantity*, and feed
+per-config measurements through the existing V1 empirical bundle builder for
+reproducible replay. Toward V3: replace `WorldSource`/`Trajectory`/`CameraRenderer`
+with a 3D simulator adapter (AirSim / Isaac / Gazebo) behind the same interfaces; the
+runner, policy interface, and evaluation are designed to survive that swap.

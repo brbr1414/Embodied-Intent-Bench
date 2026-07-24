@@ -44,3 +44,8 @@ build-*/
 *.log
 *.bak
 .cache/
+
+# V2 aerial worlds: large source rasters stay local (provenance is committed instead)
+src/v2_img/*.tif
+src/v2_img/*.tiff
+.DS_Store

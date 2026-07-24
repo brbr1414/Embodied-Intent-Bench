@@ -131,11 +131,32 @@ documentation. Never present them as hardware results.
   reviewable changes using conventional commit messages.
 - **Do not merge into `develop/v1` without explicit authorisation from the owner.**
 
+## V2 (visual closed loop)
+
+`aerointentbench/v2/` is the optional visual simulator (`docs/v2_design.md`): a GeoTIFF
+world read window-by-window, a predefined trajectory, position-dependent crops, synthetic
+target markers with exact GT, two RGB-dependent lightweight executors, and a closed loop
+where configured latency moves the UAV and skips observations. Rules that must hold:
+
+- **V1 stays frozen and zero-dep.** Nothing outside `aerointentbench/v2/` may import
+  numpy/Pillow/rasterio (pinned by `test_package_skeleton.py`); the V1 package never
+  imports v2 eagerly. V2 deps live in the `[v2]` extra only. PyTorch stays banned
+  everywhere; a future heavy executor is an optional module behind the `ImageExecutor`
+  seam.
+- **GT boundary**: `Observation` ground truth is evaluator-only. Policies see the V1
+  `RuntimeState`; executors see `rgb` and nothing else.
+- **Closed-loop semantics are canonical**: capture-time GT scoring, no queued stale
+  observations, position as a pure function of mission time.
+- **Honesty**: V2 latency/energy/communication are simulated/configured, targets are
+  synthetic markers — never present V2 numbers as real UAV perception performance.
+- Large rasters (`src/v2_img/*.tif`) are gitignored and local-only; provenance lives in
+  `data/v2_scenarios/aerial_sources.json`. Do not rename/delete the local files.
+
 ## Commands
 
 ```bash
 python -m venv .venv && .venv/bin/pip install -e ".[dev]"   # setup
-.venv/bin/pytest                                            # 483 tests
+.venv/bin/pytest                                            # 633 tests (V2 tests skip without the [v2] extras)
 .venv/bin/ruff check . && .venv/bin/ruff format --check .   # lint and format
 
 # run the benchmark (profile is the default executor)

@@ -1,0 +1,531 @@
+"""The V2 scenario schema: one document describing a visual mission end to end.
+
+A scenario names the aerial world, the UAV and its predefined trajectory, the camera,
+the synthetic object layer, the executor configurations a policy may select among, and
+the mission contract. It is a **separate** schema from the frozen V1 documents -- the V1
+contract/episode schemas are not modified to carry visual-simulation fields -- but it
+reuses the same strict-validation conventions: a declared version, unknown fields
+rejected, and actionable errors.
+
+Coordinate convention (see ``docs/v2_design.md``): the local origin is the top-left
+corner of the aerial raster; x grows right, y grows down; world units are meters, image
+units are pixels; field names carry unit suffixes (``position_m``, ``speed_mps``,
+``width_px``, ``meters_per_pixel``).
+"""
+
+from __future__ import annotations
+
+from collections.abc import Mapping
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, Final
+
+from aerointentbench.schemas.common import ComparisonOperator
+from aerointentbench.schemas.contract import Contract, PrivacyLevel
+from aerointentbench.schemas.loading import (
+    DocumentReader,
+    SchemaValidationError,
+    SchemaVersionError,
+    read_json_object,
+)
+
+__all__ = [
+    "SCENARIO_SCHEMA_VERSION",
+    "CameraSpec",
+    "DroneSpec",
+    "ExecutorConfigSpec",
+    "ObjectSpec",
+    "SimulationSpec",
+    "TrajectorySpec",
+    "V2Scenario",
+    "WorldSpec",
+    "load_scenario",
+]
+
+#: The one V2 scenario version this release reads. Any other version fails loudly.
+SCENARIO_SCHEMA_VERSION: Final = "2.0"
+
+_TOP_FIELDS: Final = (
+    "scenario_schema_version",
+    "scenario_id",
+    "random_seed",
+    "world",
+    "drone",
+    "trajectory",
+    "camera",
+    "simulation",
+    "objects",
+    "executor_configs",
+    "mission_contract",
+    "provenance",
+)
+_WORLD_FIELDS: Final = (
+    "image_path",
+    "source_id",
+    "meters_per_pixel",
+    "local_origin",
+    "invalid_pixel_rule",
+    "valid_region_m",
+)
+_DRONE_FIELDS: Final = (
+    "initial_position_m",
+    "altitude_m",
+    "speed_mps",
+    "battery_capacity_wh",
+    "flight_power_w",
+)
+_TRAJECTORY_FIELDS: Final = ("type", "waypoints_m", "region_m", "lane_spacing_m")
+_CAMERA_FIELDS: Final = (
+    "projection",
+    "footprint_width_m",
+    "footprint_height_m",
+    "output_width_px",
+    "output_height_px",
+)
+_SIMULATION_FIELDS: Final = (
+    "observation_interval_s",
+    "fallback_config_id",
+    "matching_iou_threshold",
+    "network",
+)
+_NETWORK_FIELDS: Final = ("bandwidth_mbps", "rtt_ms", "packet_loss_frac")
+_OBJECT_FIELDS: Final = (
+    "object_id",
+    "class_id",
+    "is_target",
+    "position_m",
+    "width_m",
+    "height_m",
+    "rotation_deg",
+    "z_order",
+    "appearance",
+)
+_APPEARANCE_FIELDS: Final = ("shape", "body_rgb", "stripe_rgb", "stripe", "alpha")
+_EXECUTOR_FIELDS: Final = (
+    "config_id",
+    "model_strategy_id",
+    "kind",
+    "mission_latency_s",
+    "energy_j_per_call",
+    "communication_mb_per_call",
+    "quality_tier",
+    "parameters",
+)
+_CONTRACT_FIELDS: Final = (
+    "contract_id",
+    "quality_metric",
+    "quality_operator",
+    "quality_threshold",
+    "deadline_s",
+    "communication_budget_mb",
+    "min_final_battery_frac",
+)
+
+#: The executor kinds V2 ships. A future heavy backend registers a new kind.
+_EXECUTOR_KINDS: Final = ("fast_weak", "slow_strong")
+_TRAJECTORY_TYPES: Final = ("polyline", "lawnmower")
+
+
+@dataclass(frozen=True, slots=True)
+class WorldSpec:
+    image_path: str
+    source_id: str
+    #: Ground meters per source-raster pixel. For a GeoTIFF the loader may verify this
+    #: against the file's transform; for a plain image it is the only scale there is.
+    meters_per_pixel: float
+    invalid_pixel_rule: str = "all_zero"
+    #: Optional conservative rectangle (x0, y0, x1, y1) in meters that the mission must
+    #: stay inside. Trajectory, objects, and footprints are validated against it.
+    valid_region_m: tuple[float, float, float, float] | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class DroneSpec:
+    initial_position_m: tuple[float, float]
+    altitude_m: float
+    speed_mps: float
+    battery_capacity_wh: float
+    flight_power_w: float
+
+
+@dataclass(frozen=True, slots=True)
+class TrajectorySpec:
+    type: str
+    waypoints_m: tuple[tuple[float, float], ...] = ()
+    region_m: tuple[float, float, float, float] | None = None
+    lane_spacing_m: float | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class CameraSpec:
+    projection: str
+    footprint_width_m: float
+    footprint_height_m: float
+    output_width_px: int
+    output_height_px: int
+
+
+@dataclass(frozen=True, slots=True)
+class SimulationSpec:
+    observation_interval_s: float
+    #: Safe fallback when the policy's action is invalid. Declared explicitly -- a V2
+    #: scenario never inherits the V1 legacy CFG_LOCAL_LIGHT assumption.
+    fallback_config_id: str
+    #: IoU at which a predicted component counts as matching a ground-truth instance.
+    matching_iou_threshold: float
+    #: Constant policy-visible network conditions (V2 does not model a link yet).
+    network: tuple[float, float, float]  # bandwidth_mbps, rtt_ms, packet_loss_frac
+
+
+@dataclass(frozen=True, slots=True)
+class ObjectSpec:
+    object_id: str
+    class_id: str
+    is_target: bool
+    position_m: tuple[float, float]
+    width_m: float
+    height_m: float
+    rotation_deg: float
+    z_order: int
+    appearance: Mapping[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
+class ExecutorConfigSpec:
+    config_id: str
+    model_strategy_id: str
+    kind: str
+    #: The latency the *mission* experiences. Simulated/configured, never measured.
+    mission_latency_s: float
+    energy_j_per_call: float
+    communication_mb_per_call: float
+    quality_tier: str
+    parameters: Mapping[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
+class V2Scenario:
+    scenario_id: str
+    random_seed: int
+    world: WorldSpec
+    drone: DroneSpec
+    trajectory: TrajectorySpec
+    camera: CameraSpec
+    simulation: SimulationSpec
+    objects: tuple[ObjectSpec, ...]
+    executor_configs: tuple[ExecutorConfigSpec, ...]
+    contract: Contract
+    provenance: Mapping[str, Any] = field(default_factory=dict)
+
+    @property
+    def config_ids(self) -> tuple[str, ...]:
+        return tuple(spec.config_id for spec in self.executor_configs)
+
+    @property
+    def targets(self) -> tuple[ObjectSpec, ...]:
+        return tuple(obj for obj in self.objects if obj.is_target)
+
+    @property
+    def distractors(self) -> tuple[ObjectSpec, ...]:
+        return tuple(obj for obj in self.objects if not obj.is_target)
+
+
+def load_scenario(path: Path) -> V2Scenario:
+    """Load and strictly validate a V2 scenario file."""
+    payload = read_json_object(path)
+    context = f"{path.name} -> V2Scenario"
+
+    declared = payload.get("scenario_schema_version")
+    if declared != SCENARIO_SCHEMA_VERSION:
+        raise SchemaVersionError(
+            f"{context}: scenario_schema_version {declared!r} is not supported; this "
+            f"release reads {SCENARIO_SCHEMA_VERSION!r} only"
+        )
+
+    reader = DocumentReader(payload, context=context, allowed_fields=_TOP_FIELDS)
+    world = _read_world(reader.get_object("world", allowed_fields=_WORLD_FIELDS))
+    drone = _read_drone(reader.get_object("drone", allowed_fields=_DRONE_FIELDS))
+    trajectory = _read_trajectory(
+        reader.get_object("trajectory", allowed_fields=_TRAJECTORY_FIELDS)
+    )
+    camera = _read_camera(reader.get_object("camera", allowed_fields=_CAMERA_FIELDS))
+    simulation = _read_simulation(
+        reader.get_object("simulation", allowed_fields=_SIMULATION_FIELDS)
+    )
+    objects = _read_objects(reader)
+    executors = _read_executors(reader)
+    contract = _read_contract(
+        reader.get_object("mission_contract", allowed_fields=_CONTRACT_FIELDS)
+    )
+
+    scenario = V2Scenario(
+        scenario_id=reader.get_str("scenario_id"),
+        random_seed=reader.get_int("random_seed"),
+        world=world,
+        drone=drone,
+        trajectory=trajectory,
+        camera=camera,
+        simulation=simulation,
+        objects=objects,
+        executor_configs=executors,
+        contract=contract,
+        provenance=dict(payload.get("provenance") or {}),
+    )
+    _cross_validate(scenario, context)
+    return scenario
+
+
+# --- section readers -------------------------------------------------------------------------
+
+
+def _read_world(reader: DocumentReader) -> WorldSpec:
+    rule = reader.get_optional_str("invalid_pixel_rule") or "all_zero"
+    if rule not in ("all_zero", "dataset_mask"):
+        raise SchemaValidationError(
+            f"{reader.context}: invalid_pixel_rule {rule!r} must be 'all_zero' or 'dataset_mask'"
+        )
+    return WorldSpec(
+        image_path=reader.get_str("image_path"),
+        source_id=reader.get_str("source_id"),
+        meters_per_pixel=reader.get_float("meters_per_pixel", exclusive_minimum=0.0),
+        invalid_pixel_rule=rule,
+        valid_region_m=_optional_rect(reader, "valid_region_m"),
+    )
+
+
+def _read_drone(reader: DocumentReader) -> DroneSpec:
+    return DroneSpec(
+        initial_position_m=_point(reader, "initial_position_m"),
+        altitude_m=reader.get_float("altitude_m", exclusive_minimum=0.0),
+        speed_mps=reader.get_float("speed_mps", exclusive_minimum=0.0),
+        battery_capacity_wh=reader.get_float("battery_capacity_wh", exclusive_minimum=0.0),
+        flight_power_w=reader.get_float("flight_power_w", minimum=0.0),
+    )
+
+
+def _read_trajectory(reader: DocumentReader) -> TrajectorySpec:
+    kind = reader.get_str("type")
+    if kind not in _TRAJECTORY_TYPES:
+        raise SchemaValidationError(
+            f"{reader.context}: trajectory type {kind!r} must be one of {list(_TRAJECTORY_TYPES)}"
+        )
+    if kind == "polyline":
+        raw = reader.get_passthrough("waypoints_m")
+        if not isinstance(raw, list) or len(raw) < 2:
+            raise SchemaValidationError(
+                f"{reader.context}: a polyline trajectory needs 'waypoints_m' with >= 2 points"
+            )
+        waypoints = tuple(
+            _as_point(p, reader.context, f"waypoints_m[{i}]") for i, p in enumerate(raw)
+        )
+        return TrajectorySpec(type=kind, waypoints_m=waypoints)
+    region = _optional_rect(reader, "region_m")
+    spacing = reader.get_passthrough("lane_spacing_m")
+    if region is None or spacing is None:
+        raise SchemaValidationError(
+            f"{reader.context}: a lawnmower trajectory needs 'region_m' and 'lane_spacing_m'"
+        )
+    spacing_f = reader.get_float("lane_spacing_m", exclusive_minimum=0.0)
+    return TrajectorySpec(type=kind, region_m=region, lane_spacing_m=spacing_f)
+
+
+def _read_camera(reader: DocumentReader) -> CameraSpec:
+    projection = reader.get_str("projection")
+    if projection != "orthographic":
+        raise SchemaValidationError(
+            f"{reader.context}: projection {projection!r} is not supported; V2 supports "
+            "'orthographic' only"
+        )
+    return CameraSpec(
+        projection=projection,
+        footprint_width_m=reader.get_float("footprint_width_m", exclusive_minimum=0.0),
+        footprint_height_m=reader.get_float("footprint_height_m", exclusive_minimum=0.0),
+        output_width_px=reader.get_int("output_width_px", minimum=8),
+        output_height_px=reader.get_int("output_height_px", minimum=8),
+    )
+
+
+def _read_simulation(reader: DocumentReader) -> SimulationSpec:
+    network = reader.get_object("network", allowed_fields=_NETWORK_FIELDS)
+    return SimulationSpec(
+        observation_interval_s=reader.get_float("observation_interval_s", exclusive_minimum=0.0),
+        fallback_config_id=reader.get_str("fallback_config_id"),
+        matching_iou_threshold=reader.get_float(
+            "matching_iou_threshold", exclusive_minimum=0.0, maximum=1.0
+        ),
+        network=(
+            network.get_float("bandwidth_mbps", minimum=0.0),
+            network.get_float("rtt_ms", minimum=0.0),
+            network.get_fraction("packet_loss_frac"),
+        ),
+    )
+
+
+def _read_objects(reader: DocumentReader) -> tuple[ObjectSpec, ...]:
+    objects: list[ObjectSpec] = []
+    seen: set[str] = set()
+    for entry in reader.get_object_list("objects", allowed_fields=_OBJECT_FIELDS):
+        object_id = entry.get_str("object_id")
+        if object_id in seen:
+            raise SchemaValidationError(f"{entry.context}: duplicate object_id {object_id!r}")
+        seen.add(object_id)
+        appearance = entry.get_object("appearance", allowed_fields=_APPEARANCE_FIELDS)
+        objects.append(
+            ObjectSpec(
+                object_id=object_id,
+                class_id=entry.get_str("class_id"),
+                is_target=entry.get_bool("is_target"),
+                position_m=_point(entry, "position_m"),
+                width_m=entry.get_float("width_m", exclusive_minimum=0.0),
+                height_m=entry.get_float("height_m", exclusive_minimum=0.0),
+                rotation_deg=entry.get_float("rotation_deg", minimum=-360.0, maximum=360.0),
+                z_order=entry.get_int("z_order"),
+                appearance=_read_appearance(appearance),
+            )
+        )
+    return tuple(objects)
+
+
+def _read_appearance(reader: DocumentReader) -> dict[str, Any]:
+    shape = reader.get_optional_str("shape") or "rect"
+    if shape not in ("rect", "ellipse"):
+        raise SchemaValidationError(
+            f"{reader.context}: shape {shape!r} must be 'rect' or 'ellipse'"
+        )
+    return {
+        "shape": shape,
+        "body_rgb": _rgb(reader, "body_rgb"),
+        "stripe_rgb": _rgb(reader, "stripe_rgb") if reader.get_passthrough("stripe_rgb") else None,
+        "stripe": (
+            bool(reader.get_bool("stripe"))
+            if reader.get_passthrough("stripe") is not None
+            else False
+        ),
+        "alpha": reader.get_optional_float("alpha", default=1.0, minimum=0.1, maximum=1.0),
+    }
+
+
+def _read_executors(reader: DocumentReader) -> tuple[ExecutorConfigSpec, ...]:
+    executors: list[ExecutorConfigSpec] = []
+    seen: set[str] = set()
+    for entry in reader.get_object_list("executor_configs", allowed_fields=_EXECUTOR_FIELDS):
+        config_id = entry.get_str("config_id")
+        if config_id in seen:
+            raise SchemaValidationError(f"{entry.context}: duplicate config_id {config_id!r}")
+        seen.add(config_id)
+        kind = entry.get_str("kind")
+        if kind not in _EXECUTOR_KINDS:
+            raise SchemaValidationError(
+                f"{entry.context}: executor kind {kind!r} must be one of {list(_EXECUTOR_KINDS)}"
+            )
+        executors.append(
+            ExecutorConfigSpec(
+                config_id=config_id,
+                model_strategy_id=entry.get_str("model_strategy_id"),
+                kind=kind,
+                mission_latency_s=entry.get_float("mission_latency_s", exclusive_minimum=0.0),
+                energy_j_per_call=entry.get_float("energy_j_per_call", minimum=0.0),
+                communication_mb_per_call=entry.get_float("communication_mb_per_call", minimum=0.0),
+                quality_tier=entry.get_str("quality_tier"),
+                parameters=entry.get_scalar_mapping("parameters"),
+            )
+        )
+    if len(executors) < 2:
+        raise SchemaValidationError(
+            f"{reader.context}: at least two executor_configs are required, got {len(executors)}"
+        )
+    return tuple(executors)
+
+
+def _read_contract(reader: DocumentReader) -> Contract:
+    """Build a V1 ``Contract`` from the scenario's nested mission_contract.
+
+    Reusing the frozen V1 dataclass keeps the policy interface identical -- a V1 policy
+    receives exactly the contract type it already knows -- without touching the V1 file
+    schema. Task identity and privacy are fixed for V2's single visual task.
+    """
+    return Contract(
+        contract_id=reader.get_str("contract_id"),
+        task_id="HUMAN_SEARCH_SEGMENTATION",
+        evidence_type="instance_mask_set",
+        quality_metric=reader.get_str("quality_metric"),
+        quality_operator=ComparisonOperator(reader.get_str("quality_operator")),
+        quality_threshold=reader.get_fraction("quality_threshold"),
+        deadline_s=reader.get_float("deadline_s", exclusive_minimum=0.0),
+        communication_budget_mb=reader.get_float("communication_budget_mb", minimum=0.0),
+        min_final_battery_frac=reader.get_fraction("min_final_battery_frac"),
+        privacy_level=PrivacyLevel.REMOTE_ALLOWED,
+    )
+
+
+# --- cross-document checks -------------------------------------------------------------------
+
+
+def _cross_validate(scenario: V2Scenario, context: str) -> None:
+    if scenario.simulation.fallback_config_id not in scenario.config_ids:
+        raise SchemaValidationError(
+            f"{context}: fallback_config_id {scenario.simulation.fallback_config_id!r} is not "
+            f"one of the executor_configs {list(scenario.config_ids)}"
+        )
+    if scenario.contract.quality_metric not in ("target_recall", "detection_precision"):
+        raise SchemaValidationError(
+            f"{context}: quality_metric {scenario.contract.quality_metric!r} is not an "
+            "empirical V2 metric; use 'target_recall' (canonical) or 'detection_precision'"
+        )
+    region = scenario.world.valid_region_m
+    if region is not None:
+        x0, y0, x1, y1 = region
+        if not (x1 > x0 and y1 > y0):
+            raise SchemaValidationError(f"{context}: valid_region_m {region} is not a proper rect")
+        for obj in scenario.objects:
+            x, y = obj.position_m
+            if not (x0 <= x <= x1 and y0 <= y <= y1):
+                raise SchemaValidationError(
+                    f"{context}: object {obj.object_id!r} at {obj.position_m} lies outside "
+                    f"valid_region_m {region}"
+                )
+
+
+# --- low-level field helpers -----------------------------------------------------------------
+
+
+def _as_point(raw: object, context: str, name: str) -> tuple[float, float]:
+    if (
+        not isinstance(raw, (list, tuple))
+        or len(raw) != 2
+        or not all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in raw)
+    ):
+        raise SchemaValidationError(f"{context}: {name} must be [x_m, y_m], got {raw!r}")
+    return (float(raw[0]), float(raw[1]))
+
+
+def _point(reader: DocumentReader, key: str) -> tuple[float, float]:
+    return _as_point(reader.get_passthrough(key), reader.context, key)
+
+
+def _optional_rect(reader: DocumentReader, key: str) -> tuple[float, float, float, float] | None:
+    raw = reader.get_passthrough(key)
+    if raw is None:
+        return None
+    if (
+        not isinstance(raw, (list, tuple))
+        or len(raw) != 4
+        or not all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in raw)
+    ):
+        raise SchemaValidationError(
+            f"{reader.context}: {key} must be [x0_m, y0_m, x1_m, y1_m], got {raw!r}"
+        )
+    return (float(raw[0]), float(raw[1]), float(raw[2]), float(raw[3]))
+
+
+def _rgb(reader: DocumentReader, key: str) -> tuple[int, int, int] | None:
+    raw = reader.get_passthrough(key)
+    if raw is None:
+        return None
+    if (
+        not isinstance(raw, (list, tuple))
+        or len(raw) != 3
+        or not all(isinstance(v, int) and not isinstance(v, bool) and 0 <= v <= 255 for v in raw)
+    ):
+        raise SchemaValidationError(f"{reader.context}: {key} must be [r, g, b] in 0..255")
+    return (int(raw[0]), int(raw[1]), int(raw[2]))
