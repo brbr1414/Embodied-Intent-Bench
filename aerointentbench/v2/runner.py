@@ -307,6 +307,20 @@ class MissionRunner:
             next_index = max(schedule_index + 1, math.ceil(mission_time / interval - 1e-9))
             skipped_after = tuple(range(schedule_index + 1, next_index))
             skipped_ids.extend(skipped_after)
+            # A target visible only while the executor was busy must still count as
+            # encountered-but-missed. Visibility at each skipped capture time is decided
+            # geometrically (no render, and the executor never runs on a skipped
+            # observation); it feeds the diagnostics only -- recall's denominator is the
+            # scenario's total target count regardless.
+            for skipped_index in skipped_after:
+                skipped_position = self._trajectory.position_at(skipped_index * interval)
+                self._evaluator.note_skipped_visibility(
+                    self._objects.visible_target_ids_in(
+                        self._renderer.footprint_at(skipped_position),
+                        self._scenario.camera.output_width_px,
+                        self._scenario.camera.output_height_px,
+                    )
+                )
 
             logs.append(
                 ObservationLog(

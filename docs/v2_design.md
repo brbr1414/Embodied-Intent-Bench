@@ -95,6 +95,18 @@ terminate on path end / deadline / battery floor / unrecoverable executor failur
 Example: capture at 10.0 s with 2.4 s latency → completes 12.4 s; the 11.0 s and
 12.0 s captures are skipped; the next processed capture is 13.0 s.
 
+**Skipped-capture visibility (encountered-but-missed).** The executor never runs on a
+skipped capture — no RGB is rendered for it and no prediction exists. But a target that
+was visible *only* during skipped captures must not silently vanish from the mission
+accounting, so the runner decides visibility at each skipped scheduled time
+geometrically (the renderer's own inside-test on a sample grid over the footprint; no
+raster read, no validity mask — diagnostic-only) and feeds it into the encountered set.
+Consequences, pinned by `test_skipped_only_target_counts_as_encountered_but_missed`:
+such a target counts as **encountered = true, detected = false,
+missed-while-visible = true**, and the slow executor is penalized — `target_recall`'s
+denominator is the scenario's total target count regardless, so recall was never
+corruptible by skipping; the geometric check keeps the *diagnostics* honest too.
+
 ## 6. Synthetic objects and ground truth
 
 Targets are **synthetic rescue-target markers, not realistic humans**: a

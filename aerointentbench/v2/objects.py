@@ -82,6 +82,33 @@ class ObjectLayer:
                 hits.append(obj)
         return tuple(hits)
 
+    def visible_target_ids_in(
+        self, footprint_m: tuple[float, float, float, float], samples_x: int, samples_y: int
+    ) -> tuple[str, ...]:
+        """Target ids geometrically visible in ``footprint_m``, without rendering.
+
+        Used for *skipped* scheduled observations: the executor must never run on a
+        skipped capture, but a target that was visible only while the executor was busy
+        must still count as encountered-but-missed rather than silently vanishing from
+        the mission diagnostics. This runs the same inside-test the renderer uses, on a
+        coarse sample grid over the footprint -- no raster read, no RGB, no validity
+        mask (a target standing on nodata would still count; diagnostic-only, and
+        documented as such).
+        """
+        fx0, fy0, fx1, fy1 = footprint_m
+        xs = fx0 + (np.arange(samples_x) + 0.5) * (fx1 - fx0) / samples_x
+        ys = fy0 + (np.arange(samples_y) + 0.5) * (fy1 - fy0) / samples_y
+        world_x = xs[None, :]
+        world_y = ys[:, None]
+        visible: list[str] = []
+        for obj in self.intersecting(footprint_m):
+            if not obj.is_target:
+                continue
+            inside, _ = _object_masks(obj, world_x, world_y)
+            if inside.any():
+                visible.append(obj.object_id)
+        return tuple(visible)
+
     # -- rendering ----------------------------------------------------------------------
 
     def render(

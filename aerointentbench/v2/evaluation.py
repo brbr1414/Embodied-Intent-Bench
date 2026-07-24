@@ -140,6 +140,18 @@ class MissionEvaluator:
         self.scores.append(score)
         return score
 
+    def note_skipped_visibility(self, visible_target_ids: tuple[str, ...]) -> None:
+        """Record targets that were visible during a *skipped* scheduled observation.
+
+        No prediction exists for a skipped capture -- the executor never ran -- so this
+        touches only the encountered set. The effect on the diagnostics is exactly the
+        honest one: such a target counts as encountered-but-missed
+        (``targets_missed_while_visible``) instead of silently disappearing. Recall is
+        unaffected either way, because its denominator is the scenario's total target
+        count, never the encountered set.
+        """
+        self.encountered_target_ids.update(visible_target_ids)
+
     # -- mission totals -----------------------------------------------------------------
 
     def quality_details(self, mission_time_s: float) -> dict[str, Any]:

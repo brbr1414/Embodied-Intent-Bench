@@ -572,6 +572,129 @@ def test_rule_based_policy_runs_on_the_v1_interface(make_scenario) -> None:
     assert set(result.config_selection_history) <= {"FAST", "STRONG"}
 
 
+# --- skip semantics: encountered-but-missed --------------------------------------------------
+#
+# The semantic question this section pins: does a target that was visible ONLY during
+# skipped scheduled observations count as encountered-but-missed, or does it silently
+# vanish from the evaluation? Desired (and implemented): it counts as encountered, is
+# not detected, is reported missed-while-visible, and the slow executor is penalized --
+# while the executor itself never runs on a skipped capture.
+#
+# Geometry: speed 6 m/s from x=30, footprint 8 m wide (half 4), target spanning
+# x in [38, 40]. Footprint x-ranges per scheduled capture:
+#   t=0.0 -> [26, 34]  target OUTSIDE
+#   t=1.0 -> [32, 40]  target visible
+#   t=2.0 -> [38, 46]  target visible
+#   t=3.0 -> [44, 52]  target OUTSIDE
+
+
+def skip_semantics_scenario(tmp_path: Path, world_path: Path) -> Path:
+    payload = scenario_payload(world_path)
+    payload["scenario_id"] = "V2_SKIP_SEMANTICS"
+    payload["drone"]["speed_mps"] = 6.0
+    payload["trajectory"] = {"type": "polyline", "waypoints_m": [[30.0, 40.0], [78.0, 40.0]]}
+    payload["camera"] = {
+        "projection": "orthographic",
+        "footprint_width_m": 8.0,
+        "footprint_height_m": 6.0,
+        "output_width_px": 32,
+        "output_height_px": 24,
+    }
+    payload["objects"] = [
+        {
+            "object_id": "TGT_SKIP",
+            "class_id": "rescue_target",
+            "is_target": True,
+            "position_m": [39.0, 40.0],
+            "width_m": 2.0,
+            "height_m": 2.0,
+            "rotation_deg": 0.0,
+            "z_order": 1,
+            "appearance": {
+                "shape": "rect",
+                "body_rgb": [230, 70, 20],
+                "stripe": False,
+                "alpha": 1.0,
+            },
+        }
+    ]
+    payload["executor_configs"][1]["mission_latency_s"] = 2.4  # STRONG
+    payload["mission_contract"]["deadline_s"] = 20.0
+    path = tmp_path / "skip_semantics.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    return path
+
+
+def test_fast_executor_can_catch_the_short_visibility_window(tmp_path: Path, world_png) -> None:
+    scenario = load_scenario(skip_semantics_scenario(tmp_path, world_png))
+    result = run_mission(scenario, "always_fast")
+
+    processed = [log.capture_time_s for log in result.observations]
+    assert processed[:4] == [0.0, 1.0, 2.0, 3.0]  # latency 0.4 < interval: nothing skipped
+    visible_at = {
+        log.capture_time_s: log.score["visible_target_ids"] for log in result.observations
+    }
+    assert visible_at[0.0] == [] and visible_at[3.0] == []
+    assert visible_at[1.0] == ["TGT_SKIP"] and visible_at[2.0] == ["TGT_SKIP"]
+
+    q = result.quality
+    assert q["targets_encountered"] == 1
+    assert q["targets_detected"] == 1
+    assert q["targets_missed_while_visible"] == 0
+    assert q["target_recall"] == 1.0
+    assert result.mission_success is True
+
+
+def test_skipped_only_target_counts_as_encountered_but_missed(tmp_path: Path, world_png) -> None:
+    scenario = load_scenario(skip_semantics_scenario(tmp_path, world_png))
+    result = run_mission(scenario, "always_strong")
+
+    # Capture at 0.0 s, latency 2.4 s: the 1.0 s and 2.0 s captures are skipped, the
+    # next processed observation is 3.0 s -- and the target is out of view by then.
+    first = result.observations[0]
+    assert first.capture_time_s == 0.0
+    assert first.completion_time_s == pytest.approx(2.4)
+    assert first.skipped_after == (1, 2)
+    assert first.capture_position_m == (30.0, 40.0)
+    assert first.completion_position_m == pytest.approx((44.4, 40.0))  # 6 m/s x 2.4 s
+
+    processed = [log.capture_time_s for log in result.observations]
+    assert processed[:2] == [0.0, 3.0], "stale skipped captures must never be processed later"
+    assert 1.0 not in processed and 2.0 not in processed
+    for log in result.observations:
+        assert log.score["visible_target_ids"] == [], "no processed capture ever saw the target"
+
+    # The executor ran exactly once per processed observation -- never on a skip.
+    assert len(result.observations) == result.processed_observation_count
+    assert result.skipped_observation_count == len(result.skipped_observation_ids) > 0
+
+    # The semantic core: visible only during skipped captures => encountered-but-missed,
+    # not silently vanished. Recall's denominator is the scenario total either way.
+    q = result.quality
+    assert q["targets_encountered"] == 1, "a skip-only target must still count as encountered"
+    assert q["targets_detected"] == 0
+    assert q["targets_missed_while_visible"] == 1
+    assert q["target_recall"] == 0.0
+    assert result.mission_success is False, "the slow executor is penalized for the miss"
+
+
+def test_prediction_from_t0_scores_against_t0_ground_truth(tmp_path: Path, world_png) -> None:
+    scenario = load_scenario(skip_semantics_scenario(tmp_path, world_png))
+    result = run_mission(scenario, "always_strong")
+    first = result.observations[0]
+    # The score reflects capture-time GT (t=0.0: nothing visible, nothing matched), even
+    # though the target genuinely entered the camera footprint during the skipped 1.0 s
+    # and 2.0 s captures -- proof the evaluation used the observation captured at 0.0
+    # and never re-rendered mid-flight imagery for it.
+    assert first.score["visible_target_ids"] == []
+    assert first.score["matched_target_ids"] == []
+    runner = MissionRunner(scenario, "always_strong")
+    for skipped_time in (1.0, 2.0):
+        assert "TGT_SKIP" in runner.render_at(skipped_time).visible_target_ids, (
+            "the target was really there during the skipped captures"
+        )
+
+
 # --- CLI and visualisation -------------------------------------------------------------------
 
 
