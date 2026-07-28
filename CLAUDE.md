@@ -178,11 +178,25 @@ fixtures, never person-performance evidence; `evaluation_purpose`
 (`controlled_observability` / `integration_diagnostic`) results must never be presented
 as aerial-human perception. The V2.0 `procedural_marker` mode stays untouched.
 
+**V2.3 replay viewer** (`aerointentbench/v2/replay_export.py`, `replay_viewer.py`,
+`docs/v2_design.md` §10.4): `export-replay` runs one mission (runtime snapshots on) and
+writes a self-contained bundle (`manifest.json` + `events.json` + re-rendered frames +
+embedded-data `index.html`; `replay_schema_version "1.0"`). Rules: snapshots are opt-in
+(`record_runtime_snapshots`, default off — existing results stay byte-identical) and
+`at_capture` is exactly the policy-visible `RuntimeState`, never GT; frames/scores come
+from the mission's own renderer/executor/evaluator (no second matching or success
+implementation — the exporter verifies its tallies against the evaluator and fails on
+divergence); viewer hierarchy is mission outcome → constraints → behaviour → perception
+diagnostics, with GT only behind the labelled "Debug GT" toggle; constraint status
+(SAFE/AT_RISK/VIOLATED/NOT_APPLICABLE/UNKNOWN) is presentation-layer only. **Privacy is
+NOT_APPLICABLE in V2** (no remote path exists); align V1/V2 privacy semantics — V2
+mission success has no privacy branch — before introducing any remote executor/config.
+
 ## Commands
 
 ```bash
 python -m venv .venv && .venv/bin/pip install -e ".[dev]"   # setup
-.venv/bin/pytest                                            # 633 tests (V2 tests skip without the [v2] extras)
+.venv/bin/pytest                                            # full suite (V2 tests skip without the [v2] extras; real-model/asset tests are opt-in markers)
 .venv/bin/ruff check . && .venv/bin/ruff format --check .   # lint and format
 
 # run the benchmark (profile is the default executor)

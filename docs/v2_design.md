@@ -298,6 +298,62 @@ not tuned); precision **0.353 (light) vs 0.667 (strong)**, FP 11 vs 4.
 All of this is **synthetic generated human-target observability — never real
 aerial-human perception performance**.
 
+## 10.4 V2.3 — replay bundle export and the static viewer
+
+**Purpose.** Make one mission's configuration-selection story inspectable over time:
+what the policy chose, what it cost, how the hard constraints evolved, and how the
+mission ended. The viewer's information hierarchy is deliberate — (1) mission outcome,
+(2) hard-constraint status, (3) policy/system behaviour, (4) perception diagnostics —
+and perception must stay visually subordinate.
+
+**Runtime snapshots** (`MissionRunner(record_runtime_snapshots=True)`, default off so
+existing result files stay byte-identical): each `ObservationLog` gains a `runtime`
+block — `at_capture` (exactly the policy-visible `RuntimeState`, never ground truth),
+`after_completion` (battery_frac, cumulative_energy_j, cumulative_communication_mb,
+remaining_deadline_s, path_progress), plus `config_switched` / `fallback_used` /
+`action_reason`. The snapshot restates values the loop already computed — it is a time
+series for replay consumers, never a second ledger.
+
+**Replay bundle** (`aerointentbench/v2/replay_export.py`, `replay_schema_version
+"1.0"`): `manifest.json` (identity, contract, executor configs, map geometry, honesty
+labels), `events.json` (ordered observation timeline: snapshots, evaluator scores,
+cumulative quality, constraint status, frame references), `frames/obs_NNNNNN_{rgb,pred,
+gt}.png`, `overview.png`, `index.html`. Frames are re-rendered deterministically
+through the mission's own renderer/executor (position is a pure function of mission
+time), so nothing is stored during the run and nothing uses a second implementation;
+the exporter *verifies* its cumulative tallies against the evaluator's and fails if
+they diverge. Strict JSON (`allow_nan=False`), relative paths only; deterministic for
+identical inputs except the documented `execution.measured_wall_clock_s` diagnostic.
+
+**Constraint status** is a replay-time presentation layer over the existing semantics:
+`SAFE` / `AT_RISK` / `VIOLATED` / `NOT_APPLICABLE` / `UNKNOWN`. At-risk margins are
+simple and explicit (deadline <20% remaining; battery within 0.1 of the contract
+floor; ≥80% of the communication budget spent); interim quality is progress, not a
+verdict — the final event's statuses come from the evaluator's own constraint
+booleans, and the viewer never runs a second success evaluator. **Privacy is
+`NOT_APPLICABLE`**: V2 declares no remote configuration or executor, so no executable
+path can violate it. TODO (blocking for remote work): align V1/V2 privacy semantics —
+including a privacy branch in the V2 mission-success conjunction — before any remote
+executor or remote configuration is introduced.
+
+**Viewer** (`replay_viewer.py`): one self-contained HTML page, plain HTML/CSS/JS, no
+framework, no build step; the replay JSON is embedded in the page and frames load by
+relative path, so it works from `file://` (or `python -m http.server --directory
+<bundle>`). Panels: mission map (trajectory, completed/remaining path, UAV, processed/
+skipped/detection positions), current perception view (RGB + prediction overlay;
+ground truth only behind an explicit **Debug GT** toggle), and the mission dashboard in
+the hierarchy above. Timeline: prev/next, play/pause, slider, speed control, and a
+config-selection strip over mission time.
+
+Usage:
+
+```bash
+python -m aerointentbench.v2.replay_export \
+  --scenario data/v2_scenarios/demo_img1_generated_humans.json \
+  --policy rule_based --output results/replay_demo
+# equivalently: python -m aerointentbench.v2.cli export-replay ...
+```
+
 ## 11. Next steps
 
 Toward real models: implement a heavy `ImageExecutor` kind in an optional module

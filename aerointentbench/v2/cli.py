@@ -211,6 +211,20 @@ def _cmd_inspect_assets(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_export_replay(args: argparse.Namespace) -> int:
+    from aerointentbench.v2.replay_export import export_replay_bundle
+
+    scenario = load_scenario(args.scenario)
+    print(_banner(scenario, args.policy))
+    bundle = export_replay_bundle(args.scenario, args.policy, args.output)
+    print(
+        f"wrote replay bundle {bundle}\n"
+        f"open {bundle / 'index.html'} directly in a browser, or serve it:\n"
+        f"  python -m http.server --directory {bundle} 8000"
+    )
+    return 0
+
+
 def _cmd_run_observability(args: argparse.Namespace) -> int:
     from aerointentbench.v2.observability import load_config, run_experiment
 
@@ -289,6 +303,15 @@ def main(argv: list[str] | None = None) -> int:
         help="Export up to N observation debug panels (default: none; runs stay headless).",
     )
     p_run.set_defaults(fn=_cmd_run)
+
+    p_replay = sub.add_parser(
+        "export-replay",
+        help="Run a mission and export a self-contained replay bundle + HTML viewer.",
+    )
+    p_replay.add_argument("--scenario", type=Path, required=True)
+    p_replay.add_argument("--policy", default="rule_based")
+    p_replay.add_argument("--output", type=Path, required=True)
+    p_replay.set_defaults(fn=_cmd_export_replay)
 
     args = parser.parse_args(argv)
     try:

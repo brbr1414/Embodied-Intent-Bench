@@ -75,9 +75,12 @@ class ObservationLog:
     skipped_after: tuple[int, ...]
     execution: dict[str, Any]
     score: dict[str, Any]
+    #: Optional replay/dashboard time series (``MissionRunner(record_runtime_snapshots=True)``).
+    #: ``at_capture`` is exactly the policy-visible ``RuntimeState`` — never ground truth.
+    runtime: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        payload = {
             "observation_id": self.observation_id,
             "capture_time_s": self.capture_time_s,
             "completion_time_s": self.completion_time_s,
@@ -90,6 +93,9 @@ class ObservationLog:
             "execution": self.execution,
             "score": self.score,
         }
+        if self.runtime is not None:
+            payload["runtime"] = self.runtime
+        return payload
 
 
 @dataclass
@@ -194,10 +200,15 @@ def build_policy(policy_name: str, scenario: V2Scenario):
 class MissionRunner:
     """Runs one V2 scenario under one policy, deterministically."""
 
-    def __init__(self, scenario: V2Scenario, policy_name: str) -> None:
+    def __init__(
+        self, scenario: V2Scenario, policy_name: str, *, record_runtime_snapshots: bool = False
+    ) -> None:
         self._scenario = scenario
         self._policy_name = policy_name
         self._policy = build_policy(policy_name, scenario)
+        #: Off by default so existing result files stay byte-identical. When on, every
+        #: ObservationLog carries a ``runtime`` snapshot for replay/dashboard consumers.
+        self._record_runtime_snapshots = record_runtime_snapshots
 
         self._world = open_world(
             _resolve_image_path(scenario),
@@ -292,6 +303,7 @@ class MissionRunner:
             requested = self._select(runtime_state)
             action = self._validator.validate(requested, current_config_id=current_config)
             config_id = action.config_id
+            previous_config = current_config
 
             try:
                 result: ImageExecutionResult = self._executors[config_id].run(observation.rgb)
@@ -335,6 +347,23 @@ class MissionRunner:
                     )
                 )
 
+            runtime_snapshot: dict[str, Any] | None = None
+            if self._record_runtime_snapshots:
+                # Everything here restates values the loop already computed — the snapshot
+                # is a time series for replay/dashboard consumers, never a second ledger.
+                runtime_snapshot = {
+                    "at_capture": runtime_state.to_dict(),
+                    "after_completion": {
+                        "battery_frac": battery_frac,
+                        "cumulative_energy_j": energy_j,
+                        "cumulative_communication_mb": communication_mb,
+                        "remaining_deadline_s": contract.deadline_s - completion_time,
+                        "path_progress": self._trajectory.progress_at(completion_time),
+                    },
+                    "config_switched": previous_config is not None and config_id != previous_config,
+                    "fallback_used": not action.is_valid,
+                    "action_reason": action.reason,
+                }
             logs.append(
                 ObservationLog(
                     observation_id=schedule_index,
@@ -348,6 +377,7 @@ class MissionRunner:
                     skipped_after=skipped_after,
                     execution=result.to_summary(),
                     score=score.to_dict(),
+                    runtime=runtime_snapshot,
                 )
             )
             schedule_index = next_index
@@ -456,7 +486,8 @@ class MissionRunner:
             notes=notes,
         )
 
-    # Exposed for the CLI/visualiser so they render through the same components.
+    # Exposed for the CLI/visualiser/replay exporter so they render through the same
+    # components the mission used — never a parallel implementation.
     @property
     def renderer(self) -> CameraRenderer:
         return self._renderer
@@ -464,6 +495,17 @@ class MissionRunner:
     @property
     def trajectory(self):
         return self._trajectory
+
+    @property
+    def world(self):
+        return self._world
+
+    @property
+    def objects(self) -> ObjectLayer:
+        return self._objects
+
+    def executor_for(self, config_id: str):
+        return self._executors[config_id]
 
     def render_at(self, capture_time_s: float, observation_id: int = -1) -> Observation:
         return self._renderer.render(
@@ -542,6 +584,10 @@ def _resolve_image_path(scenario: V2Scenario):
     return path
 
 
-def run_mission(scenario: V2Scenario, policy_name: str) -> V2MissionResult:
+def run_mission(
+    scenario: V2Scenario, policy_name: str, *, record_runtime_snapshots: bool = False
+) -> V2MissionResult:
     """Convenience: build a runner and run the mission once."""
-    return MissionRunner(scenario, policy_name).run()
+    return MissionRunner(
+        scenario, policy_name, record_runtime_snapshots=record_runtime_snapshots
+    ).run()
