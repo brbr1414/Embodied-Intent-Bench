@@ -58,3 +58,7 @@ src/v2_img/*.tiff
 data/v2_assets/*.png
 data/v2_assets/*.jpg
 data/v2_assets/*.jpeg
+
+# owner-supplied originals + processed synthetic humans: redistribution unconfirmed, local-only
+src/v2_img/human/*.png
+data/v2_assets/generated/*.png

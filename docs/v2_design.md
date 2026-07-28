@@ -265,6 +265,39 @@ committed `observability_img1.json` runs it the moment `data/v2_assets/manifest.
 exists. The V2.2 mission scenario is deliberately deferred until some asset is
 observably detected (§16 gating of the milestone).
 
+## 10.3 V2.2 결과 — synthetic generated human-target observability
+
+Owner-supplied **OpenAI-generated synthetic humans** (5 originals under
+`src/v2_img/human/`, classified by visual content: conventional front-standing, aerial
+standing, aerial walking, aerial crouching, plus one rear-view standing registered as
+AMBIGUOUS — possibly intended as lying — and excluded from the first experiment) were
+deterministically cleaned (`aerointentbench/v2/asset_prep.py`: halo removal preserving
+the 3 px anti-aliased band, bbox+8 px crop; originals untouched) and registered in the
+strict manifest with `synthetic: true`, pose, processing provenance, and
+redistribution **pending owner confirmation** (processed PNGs are local-only,
+gitignored).
+
+**Controlled observability** (footprint 6×4.5 m → 96/64/32 px ≈ 2.25/1.5/0.75 m):
+
+- **Stage A (conventional sanity): PASSED.** Large/medium detected by both models
+  (IoU up to 0.91); small (11×32 px) detected only by DeepLabV3.
+- **Stage B (aerial): GATE PASSED — 21/24 detected.** DeepLabV3: **24/24**, IoU
+  0.82–0.96, consistently fewer FPs. LRASPP: all large, but **0 at ≤32 px** for
+  standing/walking (crouching survived at IoU 0.59). Background complexity (grass vs
+  path) barely mattered. Latencies ~10 ms vs ~175 ms forward (mps/float32).
+- **Interpretation: Outcomes C+D.** A genuine model-strategy trade-off now exists in
+  the benchmark: the strong model buys small-target detection and precision with ~17×
+  the latency. The earlier procedural-silhouette null result is superseded for
+  *shape-realistic* synthetic targets.
+
+**Gated mission** `demo_img1_generated_humans` ("synthetic generated aerial-human
+mission diagnostic"): 3 aerial humans (64/43/28 px projected) + 1 distractor. Both
+policies: recall 2/3 (both missed the rotated edge-of-lane walking target — recorded,
+not tuned); precision **0.353 (light) vs 0.667 (strong)**, FP 11 vs 4.
+
+All of this is **synthetic generated human-target observability — never real
+aerial-human perception performance**.
+
 ## 11. Next steps
 
 Toward real models: implement a heavy `ImageExecutor` kind in an optional module

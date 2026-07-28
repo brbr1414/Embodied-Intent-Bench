@@ -549,14 +549,111 @@ def test_asset_cli_validate_and_inspect(tmp_path: Path, asset_manifest: Path, ca
     assert list((tmp_path / "i").glob("asset_*.png"))
 
 
-def test_the_committed_observability_config_is_blocked_on_real_assets() -> None:
-    """The shipped config references data/v2_assets/manifest.json, which does not exist
-    (no licensed human asset ships with the repository). Loading must fail actionably."""
+def test_the_committed_observability_configs_parse() -> None:
+    """Every shipped observability config must at least parse without the local assets.
+
+    The manifests they reference point at owner-supplied processed PNGs that are
+    local-only (redistribution pending owner confirmation, gitignored); resolving those
+    files is the opt-in real_assets test below.
+    """
     from aerointentbench.v2.observability import load_config
 
     repo = Path(__file__).resolve().parents[1]
-    config = load_config(repo / "data" / "v2_scenarios" / "observability_img1.json")
-    with pytest.raises(SchemaValidationError):
-        from aerointentbench.v2.assets import load_manifest
+    for name in (
+        "observability_img1.json",
+        "observability_generated_stageA.json",
+        "observability_generated_stageB.json",
+    ):
+        config = load_config(repo / "data" / "v2_scenarios" / name)
+        assert config.evaluation_purpose == "controlled_observability"
 
-        load_manifest(config.assets_manifest)
+
+@pytest.mark.real_assets
+def test_the_committed_manifest_resolves_the_local_generated_assets() -> None:
+    """With the owner-supplied assets present, the shipped manifest and every condition
+    asset id in the shipped configs must resolve, and every asset must be synthetic and
+    honestly view-typed."""
+    from aerointentbench.v2.observability import load_config
+
+    repo = Path(__file__).resolve().parents[1]
+    manifest_path = repo / "data" / "v2_assets" / "manifest.json"
+    if not manifest_path.is_file():
+        pytest.skip("owner-supplied manifest not present")
+    manifest = load_manifest(manifest_path)
+    assert all(record.synthetic for record in manifest.records.values())
+    assert {r.view_type for r in manifest.records.values()} <= {"conventional", "aerial"}
+    for name in (
+        "observability_img1.json",
+        "observability_generated_stageA.json",
+        "observability_generated_stageB.json",
+    ):
+        config = load_config(repo / "data" / "v2_scenarios" / name)
+        for condition in config.conditions:
+            assert condition.asset_id in manifest, (name, condition.asset_id)
+
+
+# --- deterministic asset preparation (asset_prep) --------------------------------------------
+
+
+def test_halo_removal_keeps_the_aa_band_and_zeroes_the_halo() -> None:
+    from aerointentbench.v2.asset_prep import clean_rgba
+
+    rgba = np.zeros((60, 60, 4), dtype=np.uint8)
+    rgba[20:40, 20:40] = (200, 50, 50, 255)  # solid subject
+    rgba[19, 20:40] = (200, 50, 50, 120)  # genuine AA edge (within 3px band)
+    rgba[2:58, 2:58, 3] = np.maximum(rgba[2:58, 2:58, 3], 20)  # broad low-alpha halo
+    result = clean_rgba(rgba)
+    alpha = result.rgba[..., 3]
+    assert (alpha == 120).any(), "the anti-aliased boundary must survive"
+    # Everything beyond the keep band is zero: total faint pixels shrink to the band.
+    assert int((alpha == 20).sum()) < 400, "the broad halo must be gone"
+    assert result.solid_px == 20 * 20
+
+
+def test_cleaning_is_deterministic_and_crops_with_padding() -> None:
+    from aerointentbench.v2.asset_prep import clean_rgba
+
+    rgba = np.zeros((100, 100, 4), dtype=np.uint8)
+    rgba[40:60, 45:55] = (10, 200, 10, 255)
+    one, two = clean_rgba(rgba), clean_rgba(rgba)
+    assert np.array_equal(one.rgba, two.rgba)
+    assert one.rgba.shape == (20 + 16, 10 + 16, 4)  # bbox + 8px pad each side
+    assert one.processing.startswith("halo-removal")
+
+
+def test_an_asset_with_no_solid_subject_is_rejected() -> None:
+    from aerointentbench.v2.asset_prep import clean_rgba
+
+    rgba = np.zeros((30, 30, 4), dtype=np.uint8)
+    rgba[..., 3] = 40  # faint everywhere, never solid
+    with pytest.raises(SchemaValidationError, match="no solid subject"):
+        clean_rgba(rgba)
+
+
+def test_prepare_asset_writes_and_checksums(tmp_path: Path) -> None:
+    from aerointentbench.v2.asset_prep import inspect_rgba, prepare_asset
+
+    src = tmp_path / "src.png"
+    write_asset(src)  # the procedural silhouette fixture
+    info = inspect_rgba(src)
+    assert info["has_alpha"] and info["solid_area_fraction"] > 0
+    facts = prepare_asset(src, tmp_path / "out" / "clean.png")
+    assert (tmp_path / "out" / "clean.png").is_file()
+    assert len(facts["checksum_sha256"]) == 64
+    assert facts["solid_px"] > 0
+
+
+def test_manifest_pose_and_synthetic_fields_roundtrip(tmp_path: Path) -> None:
+    asset_path = tmp_path / "sil.png"
+    checksum = write_asset(asset_path)
+    payload = manifest_payload(asset_path, checksum)
+    payload["assets"][0]["pose"] = "standing"
+    payload["assets"][0]["synthetic"] = True
+    payload["assets"][0]["processing"] = "halo-removal(...); crop"
+    manifest_file = tmp_path / "m.json"
+    manifest_file.write_text(json.dumps(payload), encoding="utf-8")
+    clear_asset_cache()
+    record = load_manifest(manifest_file).get("test_silhouette")
+    assert record.pose == "standing" and record.synthetic is True
+    assert record.provenance()["synthetic"] is True
+    assert record.processing.startswith("halo-removal")

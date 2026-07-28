@@ -47,9 +47,10 @@ packages = ["aerointentbench"]
 [tool.pytest.ini_options]
 minversion = "8.0"
 testpaths = ["tests"]
-addopts = "-ra --strict-markers -m 'not real_models'"
+addopts = "-ra --strict-markers -m 'not real_models and not real_assets'"
 markers = [
     "real_models: opt-in tests that load actual pretrained weights (run: pytest -m real_models)",
+    "real_assets: opt-in tests that need the owner-supplied local human assets (src/v2_img/human, data/v2_assets/generated)",
 ]
 
 [tool.ruff]

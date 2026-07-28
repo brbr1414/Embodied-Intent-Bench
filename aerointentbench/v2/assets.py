@@ -60,6 +60,9 @@ _ASSET_FIELDS: Final = (
     "mask_path",
     "category",
     "view_type",
+    "pose",
+    "synthetic",
+    "processing",
     "source",
     "physical",
     "rendering",
@@ -102,17 +105,28 @@ class AssetRecord:
     permitted_use: str | None = None
     anchor: str = "center"
     default_rotation_deg: float = 0.0
+    #: The subject's pose (e.g. standing / walking / crouching), when known. Free text,
+    #: but never a claim the image does not support.
+    pose: str | None = None
+    #: True for generated imagery. A synthetic asset can never yield results labelled
+    #: real aerial-human perception.
+    synthetic: bool = False
+    #: The exact deterministic processing that produced this file from its original.
+    processing: str | None = None
 
     def provenance(self) -> dict[str, Any]:
         return {
             "asset_id": self.asset_id,
             "category": self.category,
             "view_type": self.view_type,
+            "pose": self.pose,
+            "synthetic": self.synthetic,
             "provider": self.provider,
             "creator": self.creator,
             "license": self.license,
             "source_url": self.source_url,
             "redistribution_allowed": self.redistribution_allowed,
+            "processing": self.processing,
             "checksum_sha256": self.checksum_sha256,
         }
 
@@ -241,6 +255,11 @@ def _read_record(entry: DocumentReader, manifest_dir: Path) -> AssetRecord:
             if rendering and rendering.get_passthrough("default_rotation_deg") is not None
             else 0.0
         ),
+        pose=entry.get_optional_str("pose"),
+        synthetic=(
+            entry.get_bool("synthetic") if entry.get_passthrough("synthetic") is not None else False
+        ),
+        processing=entry.get_optional_str("processing"),
     )
 
 

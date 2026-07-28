@@ -105,12 +105,16 @@ python -m aerointentbench.v2.cli run-observability \
   --config data/v2_scenarios/observability_img1.json --output results/v2_observability
 ```
 
-**No licensed human asset ships with the repository** (`data/v2_assets/README.md` states
-what an owner must supply); until one exists, the experiment is blocked with an actionable
-error. A pipeline smoke with a clearly-labelled *procedural* silhouette ran the full
-matrix through both real models: empty person masks in all 18 conditions (3–37 projected
-px) — the pipeline works, and flat silhouettes at aerial scales are invisible to generic
-COCO/VOC models. That is a documented domain-gap finding, not model-performance evidence.
+**Current state**: the owner supplied **OpenAI-generated synthetic humans** (local-only;
+redistribution pending confirmation, so the PNGs are gitignored while the manifest and
+configs are committed). With them, the observability gate passed: DeepLabV3 detected
+**24/24** aerial conditions (IoU 0.82–0.96), LRASPP detected all large targets but none at
+≤32 projected px — a genuine light-vs-strong accuracy/size/latency trade-off, measured on
+real forward passes (~10 ms vs ~175 ms). A gated mission diagnostic
+(`demo_img1_generated_humans`) separates the strategies on precision (0.35 vs 0.67). All
+results are **synthetic generated human-target observability**, never real aerial-human
+perception performance. Earlier: a flat procedural silhouette was invisible to both models
+in all 18 conditions — superseded for shape-realistic synthetic targets.
 
 ## The loop
 
