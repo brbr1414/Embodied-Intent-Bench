@@ -25,15 +25,36 @@ __all__ = ["main"]
 
 
 def _banner(scenario: V2Scenario, policy: str | None) -> str:
+    torch_specs = [s for s in scenario.executor_configs if s.kind == "torch_semantic_segmentation"]
+    if torch_specs:
+        modes = {str(s.parameters["latency_mode"]) for s in torch_specs}
+        latency_line = (
+            "latency: MEASURED wall-clock drives the mission clock (machine-dependent)"
+            if modes == {"measured"}
+            else f"latency: per-executor latency_mode {sorted(modes)} "
+            "(measured wall-clock always recorded as diagnostic)"
+        )
+    else:
+        latency_line = (
+            "latency: SIMULATED (configured per executor; wall-clock recorded as diagnostic)"
+        )
     lines = [
         "mode: V2 visual closed loop (V1 profile replay remains available via "
         "aerointentbench.run_benchmark)",
         f"world image: {scenario.world.image_path} (source {scenario.world.source_id})",
         f"executors: {', '.join(f'{s.config_id} [{s.kind}]' for s in scenario.executor_configs)}",
-        "latency: SIMULATED (configured per executor; wall-clock recorded as diagnostic)",
+        latency_line,
         "energy/communication: SIMULATED/CONFIGURED (no hardware measurement)",
         "targets: SYNTHETIC rescue markers composited over real aerial imagery",
     ]
+    for spec in torch_specs:
+        p = spec.parameters
+        lines.append(
+            f"real model {spec.config_id}: {p['model_id']} (weights {p['weights_id']}, "
+            f"class {p['task_class']!r}, input {p['input_width_px']}x{p['input_height_px']}, "
+            f"device {p['device']}, dtype {p['dtype']}) -- pretrained COCO/VOC weights; "
+            "expect DOMAIN MISMATCH on the synthetic markers"
+        )
     if policy is not None:
         lines.insert(2, f"policy: {policy}")
     return "\n".join(lines)
@@ -122,6 +143,23 @@ def _cmd_run(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_check_real_models(args: argparse.Namespace) -> int:
+    import json as json_module
+
+    from aerointentbench.v2.real_models import check_real_model_availability
+
+    scenario = load_scenario(args.scenario)
+    torch_specs = [s for s in scenario.executor_configs if s.kind == "torch_semantic_segmentation"]
+    if not torch_specs:
+        print("no torch_semantic_segmentation executors in this scenario")
+        return 0
+    reports = check_real_model_availability(
+        [dict(s.parameters) for s in torch_specs], load=args.load
+    )
+    print(json_module.dumps(reports, indent=2))
+    return 0 if all(r.get("status") == "ok" for r in reports) else 2
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="aerointentbench.v2.cli", description="AeroIntentBench V2 visual missions."
@@ -131,6 +169,18 @@ def main(argv: list[str] | None = None) -> int:
     p_validate = sub.add_parser("validate", help="Validate a V2 scenario file.")
     p_validate.add_argument("--scenario", type=Path, required=True)
     p_validate.set_defaults(fn=_cmd_validate)
+
+    p_check = sub.add_parser(
+        "check-real-models",
+        help="Verify real-model executors are runnable (imports, weights, target class).",
+    )
+    p_check.add_argument("--scenario", type=Path, required=True)
+    p_check.add_argument(
+        "--load",
+        action="store_true",
+        help="Also construct each backend (downloads/caches official weights).",
+    )
+    p_check.set_defaults(fn=_cmd_check_real_models)
 
     p_overview = sub.add_parser("overview", help="Render the world/trajectory overview PNG.")
     p_overview.add_argument("--scenario", type=Path, required=True)

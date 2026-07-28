@@ -55,8 +55,17 @@ class ImageExecutionResult:
     energy_j: float
     communication_mb: float
     measurement_provenance: dict[str, str]
+    #: Backend-specific provenance (V2.1 real models record framework, weights, device,
+    #: dtype, per-call latencies, etc. here). ``None`` for the V2.0 heuristic executors,
+    #: so their result shape is unchanged.
+    diagnostics: dict[str, Any] | None = None
 
     def to_summary(self) -> dict[str, Any]:
+        if self.diagnostics is not None:
+            return {**self._base_summary(), "diagnostics": dict(self.diagnostics)}
+        return self._base_summary()
+
+    def _base_summary(self) -> dict[str, Any]:
         return {
             "config_id": self.config_id,
             "model_strategy_id": self.model_strategy_id,
@@ -161,8 +170,17 @@ class SlowStrongExecutor(_ThresholdExecutor):
 
 
 def build_executors(specs: tuple[ExecutorConfigSpec, ...]) -> dict[str, ImageExecutor]:
-    """Instantiate the executor for every configured model-strategy, keyed by config_id."""
-    kinds = {"fast_weak": FastWeakExecutor, "slow_strong": SlowStrongExecutor}
+    """Instantiate the executor for every configured model-strategy, keyed by config_id.
+
+    The torch kind resolves through a function-level import so that scenarios using only
+    the V2.0 heuristic executors never touch the optional real-model module (whose heavy
+    dependencies are themselves imported lazily, with an actionable error when absent).
+    """
+    kinds: dict[str, Any] = {"fast_weak": FastWeakExecutor, "slow_strong": SlowStrongExecutor}
+    if any(spec.kind == "torch_semantic_segmentation" for spec in specs):
+        from aerointentbench.v2.real_models import TorchSemanticSegmentationExecutor
+
+        kinds["torch_semantic_segmentation"] = TorchSemanticSegmentationExecutor
     registry: dict[str, ImageExecutor] = {}
     for spec in specs:
         try:

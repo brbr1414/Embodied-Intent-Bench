@@ -94,7 +94,18 @@ def test_v2_subpackage_only_uses_its_declared_extras() -> None:
     modules = sorted(v2_root.rglob("*.py"))
     assert modules, "expected to find v2 modules to scan"
 
-    allowed = sys.stdlib_module_names | {"aerointentbench", "numpy", "PIL", "rasterio"}
+    # numpy/PIL/rasterio are the [v2] extras; torch/torchvision are the [v2-real-models]
+    # extras, imported lazily inside the real-model backend only (the module imports
+    # them function-level, so importing aerointentbench.v2.real_models without them
+    # still works until a torch executor is actually constructed).
+    allowed = sys.stdlib_module_names | {
+        "aerointentbench",
+        "numpy",
+        "PIL",
+        "rasterio",
+        "torch",
+        "torchvision",
+    }
     for module_path in modules:
         for root in _imported_root_modules(module_path.read_text(encoding="utf-8")):
             assert root in allowed, (

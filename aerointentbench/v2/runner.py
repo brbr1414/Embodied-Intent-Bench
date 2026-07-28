@@ -154,6 +154,19 @@ def build_policy(policy_name: str, scenario: V2Scenario):
         return StaticPolicy(by_kind["fast_weak"])
     if policy_name == "always_strong":
         return StaticPolicy(by_kind["slow_strong"])
+    if policy_name in ("always_light_real", "always_strong_real"):
+        wanted_tier = "low" if policy_name == "always_light_real" else "high"
+        candidates = [
+            spec.config_id
+            for spec in scenario.executor_configs
+            if spec.kind == "torch_semantic_segmentation" and spec.quality_tier == wanted_tier
+        ]
+        if not candidates:
+            raise SchemaValidationError(
+                f"policy {policy_name!r} needs a torch_semantic_segmentation executor with "
+                f"quality_tier {wanted_tier!r}; the scenario declares none"
+            )
+        return StaticPolicy(candidates[0])
     if policy_name in scenario.config_ids:
         return StaticPolicy(policy_name)
     if policy_name in policy_registry.names():

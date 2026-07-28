@@ -30,6 +30,10 @@ dev = ["pytest>=8.0", "ruff>=0.6"]
 # aerointentbench/ imports these unless the aerointentbench.v2 subpackage is used.
 # rasterio is needed only for GeoTIFF worlds (windowed reads); PNG/JPEG worlds need Pillow.
 v2 = ["numpy>=2.0", "pillow>=10.0", "rasterio>=1.4"]
+# V2.1 real model-strategies (torchvision semantic segmentation). Heavy on purpose and
+# never imported unless a torch_semantic_segmentation executor is actually requested;
+# the default install and the default test suite need none of this.
+v2-real-models = ["torch>=2.2", "torchvision>=0.17"]
 
 [project.scripts]
 aerointentbench = "aerointentbench.run_benchmark:main"
@@ -43,7 +47,10 @@ packages = ["aerointentbench"]
 [tool.pytest.ini_options]
 minversion = "8.0"
 testpaths = ["tests"]
-addopts = "-ra --strict-markers"
+addopts = "-ra --strict-markers -m 'not real_models'"
+markers = [
+    "real_models: opt-in tests that load actual pretrained weights (run: pytest -m real_models)",
+]
 
 [tool.ruff]
 line-length = 100

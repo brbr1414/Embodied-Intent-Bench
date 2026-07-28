@@ -170,6 +170,56 @@ decoration. `rule_based` is a V1 policy reasoning over tiers — it is not tuned
 Rasters are local-only (provenance in `data/v2_scenarios/aerial_sources.json`); large
 files are gitignored.
 
+## 10.1 V2.1 — real model-strategies (`torch_semantic_segmentation`)
+
+V2.1 puts an **actual pretrained neural network** behind the executor seam. A
+`torch_semantic_segmentation` executor config (validated strictly at scenario load)
+names a torchvision model and is backed by real official weights:
+
+- `local_light_real` → `lraspp_mobilenet_v3_large` (official DEFAULT weights)
+- `local_strong_real` → `deeplabv3_resnet50` (official DEFAULT weights)
+
+**Backend / executor split.** `TorchSegmentationBackend` builds the model once, loads
+the official weights once, resolves the `person` class index **from the weight
+metadata** (never hardcoded), places the model on the resolved device (`auto`: cuda →
+mps → cpu, actual choice recorded), applies the official weight transform (preset
+resize disabled where the API allows; identifier recorded), warms up outside mission
+timing, and serves device-synchronised forward passes. Backends are **cached** per
+(model, weights, device, dtype, input size) — weights never reload per frame.
+`TorchSemanticSegmentationExecutor` resizes the RGB crop to the configured model input
+(bilinear), thresholds the target-class probabilities (configurable), applies
+config-declared postprocessing, and resizes the binary mask back to the observation
+(nearest-neighbour). Its whole input surface is `run(rgb)` — GT and object metadata are
+structurally unreachable.
+
+**Latency semantics.** Two measured quantities are always recorded
+(`model_forward_latency_s`, device-synchronised; `end_to_end_executor_latency_s`,
+preprocess→postprocess) plus the mission latency. `latency_mode: "measured"` lets the
+real end-to-end latency drive the mission clock (machine-dependent — stated in the
+result); `"configured"` keeps the deterministic profile value with the measurement as a
+diagnostic. Energy stays **simulated** (elapsed time is not a power meter);
+communication stays configured (local).
+
+**Dependencies.** `pip install -e ".[v2-real-models]"` (torch, torchvision), imported
+lazily only when a torch executor is actually built; a missing install fails with that
+exact command. The default test suite runs on an injected fake backend; the genuine
+models are exercised by opt-in tests (`pytest -m real_models`) and by
+`python -m aerointentbench.v2.cli check-real-models --scenario … [--load]`.
+
+**Domain mismatch (deliberately reported).** The shipped scenario
+(`demo_img1_real_models.json`) still uses **synthetic rescue markers**, which a
+COCO/VOC-trained person model has never seen. Poor or empty masks there are a domain
+mismatch, not an implementation failure and not a perception result; marker colours are
+not tuned to exploit the pretrained models. Realistic aerial-person target assets (or
+an aerial-person dataset) are required for the next *evaluation* milestone — V2.1 is an
+*integration* milestone.
+
+**Future strategies (documented, not built).** The same `run(rgb)` seam accommodates a
+prompt-based pipeline — lightweight detector → person boxes → SAM/SAM2 → instance
+masks — as a new executor kind; SAM alone is not an autonomous detector and is never
+fed GT boxes in benchmark mode. Remote execution, INT8/FP16 profiles, and dynamic
+networking remain future kinds/parameters on this seam.
+
 ## 11. Next steps
 
 Toward real models: implement a heavy `ImageExecutor` kind in an optional module

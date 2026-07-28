@@ -121,9 +121,27 @@ _CONTRACT_FIELDS: Final = (
     "min_final_battery_frac",
 )
 
-#: The executor kinds V2 ships. A future heavy backend registers a new kind.
-_EXECUTOR_KINDS: Final = ("fast_weak", "slow_strong")
+#: The executor kinds V2 ships. The two heuristic kinds are the V2.0 test backends; the
+#: torch kind is the V2.1 real-model seam and needs the optional [v2-real-models] extra.
+_EXECUTOR_KINDS: Final = ("fast_weak", "slow_strong", "torch_semantic_segmentation")
 _TRAJECTORY_TYPES: Final = ("polyline", "lawnmower")
+
+#: Required entries in ``parameters`` for a torch_semantic_segmentation executor. Kept in
+#: the scalar ``parameters`` map -- its documented extension-point role -- rather than as
+#: new top-level fields, so V2.0 configs are not reinterpreted.
+_TORCH_REQUIRED_PARAMETERS: Final = (
+    "model_id",
+    "weights_id",
+    "task_class",
+    "input_width_px",
+    "input_height_px",
+    "probability_threshold",
+    "device",
+    "dtype",
+    "latency_mode",
+)
+_TORCH_LATENCY_MODES: Final = ("measured", "configured")
+_TORCH_DTYPES: Final = ("float32", "float16")
 
 
 @dataclass(frozen=True, slots=True)
@@ -418,6 +436,9 @@ def _read_executors(reader: DocumentReader) -> tuple[ExecutorConfigSpec, ...]:
             raise SchemaValidationError(
                 f"{entry.context}: executor kind {kind!r} must be one of {list(_EXECUTOR_KINDS)}"
             )
+        parameters = entry.get_scalar_mapping("parameters")
+        if kind == "torch_semantic_segmentation":
+            _validate_torch_parameters(parameters, entry.context)
         executors.append(
             ExecutorConfigSpec(
                 config_id=config_id,
@@ -427,7 +448,7 @@ def _read_executors(reader: DocumentReader) -> tuple[ExecutorConfigSpec, ...]:
                 energy_j_per_call=entry.get_float("energy_j_per_call", minimum=0.0),
                 communication_mb_per_call=entry.get_float("communication_mb_per_call", minimum=0.0),
                 quality_tier=entry.get_str("quality_tier"),
-                parameters=entry.get_scalar_mapping("parameters"),
+                parameters=parameters,
             )
         )
     if len(executors) < 2:
@@ -456,6 +477,42 @@ def _read_contract(reader: DocumentReader) -> Contract:
         min_final_battery_frac=reader.get_fraction("min_final_battery_frac"),
         privacy_level=PrivacyLevel.REMOTE_ALLOWED,
     )
+
+
+def _validate_torch_parameters(parameters: Mapping[str, Any], context: str) -> None:
+    """Validate the model-strategy parameters of a real-model executor at load time.
+
+    Failing here -- with the exact missing or invalid key -- beats failing after the
+    world has been opened and a mission is halfway constructed.
+    """
+    missing = [key for key in _TORCH_REQUIRED_PARAMETERS if key not in parameters]
+    if missing:
+        raise SchemaValidationError(
+            f"{context}: a torch_semantic_segmentation executor requires parameters "
+            f"{list(_TORCH_REQUIRED_PARAMETERS)}; missing {missing}"
+        )
+    if parameters["latency_mode"] not in _TORCH_LATENCY_MODES:
+        raise SchemaValidationError(
+            f"{context}: latency_mode {parameters['latency_mode']!r} must be one of "
+            f"{list(_TORCH_LATENCY_MODES)}"
+        )
+    if parameters["dtype"] not in _TORCH_DTYPES:
+        raise SchemaValidationError(
+            f"{context}: dtype {parameters['dtype']!r} must be one of {list(_TORCH_DTYPES)}"
+        )
+    for key in ("input_width_px", "input_height_px"):
+        value = parameters[key]
+        if not isinstance(value, int) or isinstance(value, bool) or value < 32:
+            raise SchemaValidationError(f"{context}: {key} must be an integer >= 32, got {value!r}")
+    threshold = parameters["probability_threshold"]
+    if (
+        not isinstance(threshold, (int, float))
+        or isinstance(threshold, bool)
+        or not (0.0 < float(threshold) < 1.0)
+    ):
+        raise SchemaValidationError(
+            f"{context}: probability_threshold must be in (0, 1), got {threshold!r}"
+        )
 
 
 # --- cross-document checks -------------------------------------------------------------------

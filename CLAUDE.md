@@ -152,6 +152,20 @@ where configured latency moves the UAV and skips observations. Rules that must h
 - Large rasters (`src/v2_img/*.tif`) are gitignored and local-only; provenance lives in
   `data/v2_scenarios/aerial_sources.json`. Do not rename/delete the local files.
 
+**V2.1 real models** (`aerointentbench/v2/real_models.py`, `docs/v2_design.md` §10.1):
+`torch_semantic_segmentation` executors run actual pretrained torchvision models
+(LRASPP-MobileNetV3 light / DeepLabV3-ResNet50 strong, official DEFAULT weights) behind
+the same `run(rgb)` seam. Rules: torch/torchvision live ONLY in the `[v2-real-models]`
+extra, imported lazily inside the backend (the default suite uses an injected fake and
+never downloads weights; genuine models are `pytest -m real_models` / `check-real-models`);
+the person class index comes from weight metadata, never hardcoded; backends are cached
+per strategy (no per-frame reloads); `latency_mode` measured vs configured is explicit and
+never silently mixed; energy stays simulated. **Synthetic markers ≠ people**: COCO/VOC
+models scoring recall 0 on the V2 scenario is documented domain mismatch — do not tune
+marker colours to exploit pretrained models, and never present V2.1 numbers as real
+aerial-human perception. `.venv` may be a symlink to `~/.venvs/aerointentbench` (large
+venvs inside the OneDrive-synced tree cause file-provider stalls).
+
 ## Commands
 
 ```bash

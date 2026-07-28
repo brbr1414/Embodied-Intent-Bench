@@ -65,6 +65,30 @@ python -m aerointentbench.v2.cli run --scenario data/v2_scenarios/demo_img1_lawn
 The large rasters under `src/v2_img/` are local-only (gitignored); their provenance and the
 `img_1`/`img_2` mapping live in `data/v2_scenarios/aerial_sources.json`.
 
+### V2.1: real pretrained model-strategies
+
+`torch_semantic_segmentation` executors put **actual pretrained torchvision models** behind
+the same closed loop: `local_light_real` (`lraspp_mobilenet_v3_large`) and
+`local_strong_real` (`deeplabv3_resnet50`), official DEFAULT weights, person class resolved
+from weight metadata, real forward passes on the rendered RGB crop, and **measured**
+wall-clock latency optionally driving the mission clock (`latency_mode`). Heavy deps stay
+behind an extra and are lazily imported; the default test suite uses a fake backend and
+never downloads weights.
+
+```bash
+pip install -e ".[v2,v2-real-models]"      # + torch, torchvision (optional)
+python -m aerointentbench.v2.cli check-real-models \
+  --scenario data/v2_scenarios/demo_img1_real_models.json --load
+python -m aerointentbench.v2.cli run \
+  --scenario data/v2_scenarios/demo_img1_real_models.json \
+  --policy always_strong_real --output results/v2_real
+```
+
+**Honesty**: the scenario's targets are still synthetic rescue markers, which COCO/VOC
+person models have never seen — V2.1 results are *integration* results under deliberate
+domain mismatch, not real aerial-human perception performance. Energy remains simulated.
+Realistic aerial-person target assets are the next evaluation milestone.
+
 ## The loop
 
 ```

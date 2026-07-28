@@ -49,3 +49,7 @@ build-*/
 src/v2_img/*.tif
 src/v2_img/*.tiff
 .DS_Store
+
+# .venv may be a symlink to a venv outside the cloud-synced tree (OneDrive stalls on
+# large venvs); ignore it in either form
+.venv
