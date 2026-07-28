@@ -160,11 +160,101 @@ def _cmd_check_real_models(args: argparse.Namespace) -> int:
     return 0 if all(r.get("status") == "ok" for r in reports) else 2
 
 
+def _cmd_validate_assets(args: argparse.Namespace) -> int:
+    from aerointentbench.v2.assets import load_asset, load_manifest
+
+    manifest = load_manifest(args.manifest)
+    for asset_id in sorted(manifest.records):
+        record = manifest.records[asset_id]
+        load_asset(record)  # decodes + validates the mask
+        redistribution = "redistributable" if record.redistribution_allowed else "LOCAL-ONLY"
+        print(
+            f"{asset_id}: OK  [{record.view_type}] {record.category}  "
+            f"{record.nominal_width_m}x{record.nominal_height_m} m  "
+            f"license={record.license} ({redistribution})  provider={record.provider}"
+        )
+    print(f"{len(manifest.records)} asset(s) valid in {args.manifest}")
+    return 0
+
+
+def _cmd_inspect_assets(args: argparse.Namespace) -> int:
+    import numpy as np
+    from PIL import Image, ImageDraw
+
+    from aerointentbench.v2.assets import load_asset, load_manifest
+
+    manifest = load_manifest(args.manifest)
+    args.output.mkdir(parents=True, exist_ok=True)
+    for asset_id in sorted(manifest.records):
+        record = manifest.records[asset_id]
+        asset = load_asset(record)
+        h, w = asset.rgb.shape[:2]
+        caption_h = 46
+        panel = Image.new("RGB", (w * 2 + 4, h + caption_h), (24, 24, 24))
+        panel.paste(Image.fromarray(asset.rgb), (0, caption_h))
+        panel.paste(Image.fromarray(asset.mask.astype(np.uint8) * 255), (w + 4, caption_h))
+        draw = ImageDraw.Draw(panel)
+        draw.text(
+            (4, 4),
+            f"{asset_id}  [{record.view_type}] {record.category}  "
+            f"{record.nominal_width_m}x{record.nominal_height_m} m",
+            fill=(230, 230, 230),
+        )
+        draw.text(
+            (4, 24),
+            f"license={record.license}  provider={record.provider}  RGB | binary mask",
+            fill=(160, 160, 160),
+        )
+        path = args.output / f"asset_{asset_id}.png"
+        panel.save(path)
+        print(f"wrote {path}")
+    return 0
+
+
+def _cmd_run_observability(args: argparse.Namespace) -> int:
+    from aerointentbench.v2.observability import load_config, run_experiment
+
+    config = load_config(args.config)
+    print(
+        f"observability experiment {config.experiment_id!r}\n"
+        f"purpose: {config.evaluation_purpose} -- results are NOT real aerial-human "
+        "perception performance\n"
+        f"world: {config.world.image_path}  conditions: {len(config.conditions)}  "
+        f"models: {[s.config_id for s in config.executor_configs]}"
+    )
+    report = run_experiment(config, args.output, panels=args.panels)
+    detected = sum(1 for row in report["rows"] if row["detected_by_evidence_rule"])
+    print(
+        f"rows: {len(report['rows'])}  detected-by-evidence-rule: {detected}\n"
+        f"view types: {report['honesty']['view_types_present']}\n"
+        f"wrote {report['report_path']}"
+    )
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="aerointentbench.v2.cli", description="AeroIntentBench V2 visual missions."
     )
     sub = parser.add_subparsers(dest="command", required=True)
+
+    p_va = sub.add_parser("validate-assets", help="Validate a target-asset manifest.")
+    p_va.add_argument("--manifest", type=Path, required=True)
+    p_va.set_defaults(fn=_cmd_validate_assets)
+
+    p_ia = sub.add_parser("inspect-assets", help="Export RGB|mask inspection panels per asset.")
+    p_ia.add_argument("--manifest", type=Path, required=True)
+    p_ia.add_argument("--output", type=Path, required=True)
+    p_ia.set_defaults(fn=_cmd_inspect_assets)
+
+    p_obs = sub.add_parser(
+        "run-observability",
+        help="Run the controlled single-target observability matrix over the real models.",
+    )
+    p_obs.add_argument("--config", type=Path, required=True)
+    p_obs.add_argument("--output", type=Path, required=True)
+    p_obs.add_argument("--panels", type=int, default=0, metavar="N")
+    p_obs.set_defaults(fn=_cmd_run_observability)
 
     p_validate = sub.add_parser("validate", help="Validate a V2 scenario file.")
     p_validate.add_argument("--scenario", type=Path, required=True)

@@ -220,6 +220,51 @@ masks — as a new executor kind; SAM alone is not an autonomous detector and is
 fed GT boxes in benchmark mode. Remote execution, INT8/FP16 profiles, and dynamic
 networking remain future kinds/parameters on this seam.
 
+## 10.2 V2.2 — image-based human target assets and controlled observability
+
+V2.2 replaces "orange rectangle stands for a person" with an **image-asset target
+layer**, so the V2.1 models can be shown something person-shaped — without ever bending
+the evaluation toward them.
+
+**Assets** (`aerointentbench/v2/assets.py`). A strict manifest (`asset_schema_version
+"1.0"`) records, per asset: RGBA (alpha-derived mask) or RGB+mask-file, category,
+**view_type** (`conventional` / `aerial` / `procedural` — never conflated, never
+relabelled), full provenance (provider, license, redistribution permission), explicit
+nominal physical dimensions, and a verified sha256. Missing files, empty masks,
+dimension mismatches, unknown fields, and checksum lies all fail actionably. **No
+licensed human asset ships with the repository** — `data/v2_assets/` holds the template
+and policy; local, non-redistributable assets are gitignored.
+
+**Rendering** (`ObjectLayer`, render_mode `image_asset` beside the preserved V2.0
+`procedural_marker`). Physical metres → footprint-scale pixels decide the projected
+size (a zero-pixel projection is recorded, never enlarged); RGB resizes bilinearly and
+composites through the smooth alpha (anti-aliased edges, `opacity`,
+RGB-only `brightness_factor`); the **binary GT mask travels the same spatial transform
+with nearest-neighbour resampling** — ground truth is transformed geometry, never a
+threshold of the composited pixels. Rotation, crop clipping, partial visibility,
+overlap z-order, and per-object projection stats (`asset_projections` in observation
+provenance) are all exact and tested. Executors and policies still see only the final
+RGB.
+
+**Controlled observability** (`aerointentbench/v2/observability.py`, CLI
+`run-observability`). A deterministic single-target matrix — asset × projected size ×
+rotation × background — rendered by the normal camera pipeline and scored per model:
+positive pixels, target intersection / pixel IoU / pixel recall, false positives, and
+detection under the existing evidence rule, plus measured latencies. Every report
+carries `evaluation_purpose` and the view types present; `controlled_observability` /
+`integration_diagnostic` results are never presentable as aerial-human perception.
+
+**Measured so far (honest).** With a clearly-labelled *procedural* silhouette (blue
+head-and-body shape, 0.3–1.2 m widths → 3×10 to 13×37 projected px on img_1), both
+real models returned **empty person masks in all 18 conditions** (zero overlap, zero
+false positives; LRASPP ~10 ms, DeepLabV3 ~175 ms forward on MPS). That is the
+pipeline working and the domain gap being real: flat cartoon silhouettes at aerial
+scales are invisible to generic COCO/VOC models. The conventional-view-cutout question
+(outcome A) stays open until an owner supplies a **licensed** person asset — the
+committed `observability_img1.json` runs it the moment `data/v2_assets/manifest.json`
+exists. The V2.2 mission scenario is deliberately deferred until some asset is
+observably detected (§16 gating of the milestone).
+
 ## 11. Next steps
 
 Toward real models: implement a heavy `ImageExecutor` kind in an optional module

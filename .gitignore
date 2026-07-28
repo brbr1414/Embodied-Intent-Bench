@@ -53,3 +53,8 @@ src/v2_img/*.tiff
 # .venv may be a symlink to a venv outside the cloud-synced tree (OneDrive stalls on
 # large venvs); ignore it in either form
 .venv
+
+# V2.2: local-only (non-redistributable) target assets never get committed
+data/v2_assets/*.png
+data/v2_assets/*.jpg
+data/v2_assets/*.jpeg

@@ -49,6 +49,8 @@ _TOP_FIELDS: Final = (
     "scenario_schema_version",
     "scenario_id",
     "random_seed",
+    "evaluation_purpose",
+    "assets_manifest",
     "world",
     "drone",
     "trajectory",
@@ -58,6 +60,16 @@ _TOP_FIELDS: Final = (
     "executor_configs",
     "mission_contract",
     "provenance",
+)
+
+#: What a scenario's results are allowed to claim. ``controlled_observability`` and
+#: ``integration_diagnostic`` results must never be presented as aerial-human
+#: perception; only a scenario with genuinely appropriate licensed aerial assets earns
+#: ``aerial_target_evaluation``.
+_EVALUATION_PURPOSES: Final = (
+    "integration_diagnostic",
+    "controlled_observability",
+    "aerial_target_evaluation",
 )
 _WORLD_FIELDS: Final = (
     "image_path",
@@ -93,13 +105,18 @@ _OBJECT_FIELDS: Final = (
     "object_id",
     "class_id",
     "is_target",
+    "render_mode",
+    "asset_id",
     "position_m",
     "width_m",
     "height_m",
     "rotation_deg",
     "z_order",
+    "opacity",
+    "brightness_factor",
     "appearance",
 )
+_RENDER_MODES: Final = ("procedural_marker", "image_asset")
 _APPEARANCE_FIELDS: Final = ("shape", "body_rgb", "stripe_rgb", "stripe", "alpha")
 _EXECUTOR_FIELDS: Final = (
     "config_id",
@@ -206,6 +223,15 @@ class ObjectSpec:
     rotation_deg: float
     z_order: int
     appearance: Mapping[str, Any] = field(default_factory=dict)
+    #: How this object is drawn: the V2.0 procedural marker (default) or a V2.2 image
+    #: asset resolved through the scenario's assets_manifest by ``asset_id``.
+    render_mode: str = "procedural_marker"
+    asset_id: str | None = None
+    #: Compositing opacity of the whole object (multiplies the asset alpha). RGB only;
+    #: GT geometry is unaffected.
+    opacity: float = 1.0
+    #: Deterministic RGB-only appearance transform (1.0 = unchanged). Never touches GT.
+    brightness_factor: float = 1.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -234,6 +260,10 @@ class V2Scenario:
     executor_configs: tuple[ExecutorConfigSpec, ...]
     contract: Contract
     provenance: Mapping[str, Any] = field(default_factory=dict)
+    #: Path to the target-asset manifest (required when any object uses image_asset).
+    assets_manifest: str | None = None
+    #: What results from this scenario may claim (see _EVALUATION_PURPOSES).
+    evaluation_purpose: str | None = None
 
     @property
     def config_ids(self) -> tuple[str, ...]:
@@ -276,6 +306,13 @@ def load_scenario(path: Path) -> V2Scenario:
         reader.get_object("mission_contract", allowed_fields=_CONTRACT_FIELDS)
     )
 
+    evaluation_purpose = reader.get_optional_str("evaluation_purpose")
+    if evaluation_purpose is not None and evaluation_purpose not in _EVALUATION_PURPOSES:
+        raise SchemaValidationError(
+            f"{context}: evaluation_purpose {evaluation_purpose!r} must be one of "
+            f"{list(_EVALUATION_PURPOSES)}"
+        )
+
     scenario = V2Scenario(
         scenario_id=reader.get_str("scenario_id"),
         random_seed=reader.get_int("random_seed"),
@@ -288,6 +325,8 @@ def load_scenario(path: Path) -> V2Scenario:
         executor_configs=executors,
         contract=contract,
         provenance=dict(payload.get("provenance") or {}),
+        assets_manifest=reader.get_optional_str("assets_manifest"),
+        evaluation_purpose=evaluation_purpose,
     )
     _cross_validate(scenario, context)
     return scenario
@@ -387,7 +426,33 @@ def _read_objects(reader: DocumentReader) -> tuple[ObjectSpec, ...]:
         if object_id in seen:
             raise SchemaValidationError(f"{entry.context}: duplicate object_id {object_id!r}")
         seen.add(object_id)
-        appearance = entry.get_object("appearance", allowed_fields=_APPEARANCE_FIELDS)
+
+        render_mode = entry.get_optional_str("render_mode") or "procedural_marker"
+        if render_mode not in _RENDER_MODES:
+            raise SchemaValidationError(
+                f"{entry.context}: render_mode {render_mode!r} must be one of {list(_RENDER_MODES)}"
+            )
+        asset_id = entry.get_optional_str("asset_id")
+        if render_mode == "image_asset":
+            if asset_id is None:
+                raise SchemaValidationError(
+                    f"{entry.context}: render_mode 'image_asset' requires 'asset_id'"
+                )
+            appearance: dict[str, Any] = {}
+            if entry.get_passthrough("appearance") is not None:
+                raise SchemaValidationError(
+                    f"{entry.context}: 'appearance' is the procedural-marker block; an "
+                    "image_asset object styles itself via opacity/brightness_factor"
+                )
+        else:
+            if asset_id is not None:
+                raise SchemaValidationError(
+                    f"{entry.context}: asset_id is only valid with render_mode 'image_asset'"
+                )
+            appearance = _read_appearance(
+                entry.get_object("appearance", allowed_fields=_APPEARANCE_FIELDS)
+            )
+
         objects.append(
             ObjectSpec(
                 object_id=object_id,
@@ -398,7 +463,13 @@ def _read_objects(reader: DocumentReader) -> tuple[ObjectSpec, ...]:
                 height_m=entry.get_float("height_m", exclusive_minimum=0.0),
                 rotation_deg=entry.get_float("rotation_deg", minimum=-360.0, maximum=360.0),
                 z_order=entry.get_int("z_order"),
-                appearance=_read_appearance(appearance),
+                appearance=appearance,
+                render_mode=render_mode,
+                asset_id=asset_id,
+                opacity=entry.get_optional_float("opacity", default=1.0, minimum=0.1, maximum=1.0),
+                brightness_factor=entry.get_optional_float(
+                    "brightness_factor", default=1.0, minimum=0.2, maximum=3.0
+                ),
             )
         )
     return tuple(objects)
@@ -541,6 +612,13 @@ def _cross_validate(scenario: V2Scenario, context: str) -> None:
                     f"{context}: object {obj.object_id!r} at {obj.position_m} lies outside "
                     f"valid_region_m {region}"
                 )
+
+    image_objects = [obj for obj in scenario.objects if obj.render_mode == "image_asset"]
+    if image_objects and scenario.assets_manifest is None:
+        raise SchemaValidationError(
+            f"{context}: object(s) {[o.object_id for o in image_objects]} use render_mode "
+            "'image_asset' but the scenario declares no 'assets_manifest'"
+        )
 
 
 # --- low-level field helpers -----------------------------------------------------------------

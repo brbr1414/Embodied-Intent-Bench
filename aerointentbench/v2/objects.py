@@ -15,11 +15,13 @@ object list (stable across the mission).
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 from typing import Final
 
 import numpy as np
 
+from aerointentbench.v2.assets import LoadedAsset
 from aerointentbench.v2.scenario import ObjectSpec
 
 __all__ = [
@@ -43,17 +45,39 @@ class RenderedObjects:
     instance: np.ndarray  # int32 (H, W): 0 bg, else 1-based object ordinal
     visible_target_ids: tuple[str, ...]
     visible_distractor_ids: tuple[str, ...]
+    #: Per rendered object: requested physical size, projected pixel sizes, visible
+    #: pixel area, and visible fraction of the transformed mask (evaluator/debug only).
+    projections: dict[str, dict[str, float]] = field(default_factory=dict)
 
 
 class ObjectLayer:
-    """Holds the scenario's objects and paints the ones a footprint can see."""
+    """Holds the scenario's objects and paints the ones a footprint can see.
 
-    def __init__(self, objects: tuple[ObjectSpec, ...]) -> None:
+    Two render modes per object: the V2.0 ``procedural_marker`` (parametric shapes) and
+    the V2.2 ``image_asset`` (an RGB(A) asset composited with its own mask). Ground
+    truth always comes from the object's *mask geometry* -- the procedural inside-test
+    or the transformed asset mask -- never from thresholding the composited RGB.
+    """
+
+    def __init__(
+        self,
+        objects: tuple[ObjectSpec, ...],
+        assets: Mapping[str, LoadedAsset] | None = None,
+    ) -> None:
         # Paint order: z_order then object_id -- fully deterministic under overlap.
         self._objects = tuple(sorted(objects, key=lambda o: (o.z_order, o.object_id)))
         #: 1-based instance ids follow the *scenario declaration* order, not paint order,
         #: so an id is stable regardless of z-order edits.
         self._instance_ids = {obj.object_id: i + 1 for i, obj in enumerate(objects)}
+        self._assets = dict(assets or {})
+        for obj in self._objects:
+            if obj.render_mode == "image_asset" and obj.asset_id not in self._assets:
+                from aerointentbench.schemas.loading import SchemaValidationError
+
+                raise SchemaValidationError(
+                    f"object {obj.object_id!r} references asset {obj.asset_id!r}, which is "
+                    "not in the loaded asset manifest"
+                )
 
     @property
     def objects(self) -> tuple[ObjectSpec, ...]:
@@ -135,24 +159,15 @@ class ObjectLayer:
         instance = np.zeros((h, w), dtype=np.int32)
         visible_targets: list[str] = []
         visible_distractors: list[str] = []
+        projections: dict[str, dict[str, float]] = {}
 
         for obj in self.intersecting(footprint_m):
-            inside, stripe = _object_masks(obj, world_x, world_y)
-            inside &= valid
-            if not inside.any():
+            if obj.render_mode == "image_asset":
+                inside = self._composite_image_asset(obj, rgb, footprint_m, valid, projections)
+            else:
+                inside = self._paint_procedural(obj, rgb, world_x, world_y, valid)
+            if inside is None or not inside.any():
                 continue
-
-            appearance = obj.appearance
-            body = np.array(appearance.get("body_rgb") or (220, 60, 20), dtype=np.float32)
-            alpha = float(appearance.get("alpha") or 1.0)
-            paint = np.zeros((h, w, 3), dtype=np.float32)
-            paint[inside] = body
-            if appearance.get("stripe") and appearance.get("stripe_rgb") is not None:
-                paint[stripe & inside] = np.array(appearance["stripe_rgb"], dtype=np.float32)
-
-            blended = rgb.astype(np.float32)
-            blended[inside] = (1.0 - alpha) * blended[inside] + alpha * paint[inside]
-            rgb[inside] = np.clip(blended[inside], 0, 255).astype(np.uint8)
 
             label = SEMANTIC_TARGET if obj.is_target else SEMANTIC_DISTRACTOR
             semantic[inside] = label
@@ -164,7 +179,119 @@ class ObjectLayer:
             instance=instance,
             visible_target_ids=tuple(visible_targets),
             visible_distractor_ids=tuple(visible_distractors),
+            projections=projections,
         )
+
+    def _paint_procedural(
+        self,
+        obj: ObjectSpec,
+        rgb: np.ndarray,
+        world_x: np.ndarray,
+        world_y: np.ndarray,
+        valid: np.ndarray,
+    ) -> np.ndarray | None:
+        """The V2.0 parametric marker painter. Returns the object's GT mask in the crop."""
+        inside, stripe = _object_masks(obj, world_x, world_y)
+        inside &= valid
+        if not inside.any():
+            return None
+
+        appearance = obj.appearance
+        body = np.array(appearance.get("body_rgb") or (220, 60, 20), dtype=np.float32)
+        alpha = float(appearance.get("alpha") or 1.0)
+        paint = np.zeros((*inside.shape, 3), dtype=np.float32)
+        paint[inside] = body
+        if appearance.get("stripe") and appearance.get("stripe_rgb") is not None:
+            paint[stripe & inside] = np.array(appearance["stripe_rgb"], dtype=np.float32)
+
+        blended = rgb.astype(np.float32)
+        blended[inside] = (1.0 - alpha) * blended[inside] + alpha * paint[inside]
+        rgb[inside] = np.clip(blended[inside], 0, 255).astype(np.uint8)
+        return inside
+
+    def _composite_image_asset(
+        self,
+        obj: ObjectSpec,
+        rgb: np.ndarray,
+        footprint_m: tuple[float, float, float, float],
+        valid: np.ndarray,
+        projections: dict[str, dict[str, float]],
+    ) -> np.ndarray | None:
+        """Composite one image asset into the crop and return its GT mask.
+
+        The asset's smooth alpha (bilinear-resized, rotated) blends the RGB so edges
+        stay anti-aliased; the *binary* GT mask travels through the same spatial
+        transform with nearest-neighbour resampling, so ground truth is exact geometry
+        and never derived from the composited pixels. Physical size drives everything:
+        metres -> output pixels via the footprint scale; a target that projects to zero
+        pixels is skipped and recorded, never silently enlarged.
+        """
+        from PIL import Image
+
+        asset = self._assets[obj.asset_id]  # presence checked at construction
+        h, w = rgb.shape[:2]
+        fx0, fy0, fx1, fy1 = footprint_m
+        px_per_m_x = w / (fx1 - fx0)
+        px_per_m_y = h / (fy1 - fy0)
+
+        target_w_px = round(obj.width_m * px_per_m_x)
+        target_h_px = round(obj.height_m * px_per_m_y)
+        stats = {
+            "requested_width_m": obj.width_m,
+            "requested_height_m": obj.height_m,
+            "projected_width_px": float(target_w_px),
+            "projected_height_px": float(target_h_px),
+            "visible_px": 0.0,
+            "visible_fraction": 0.0,
+        }
+        projections[obj.object_id] = stats
+        if target_w_px < 1 or target_h_px < 1:
+            return None  # zero-pixel projection: recorded above, never enlarged
+
+        rgb_img = Image.fromarray(asset.rgb).resize((target_w_px, target_h_px), Image.BILINEAR)
+        alpha_img = Image.fromarray((asset.alpha * 255).astype(np.uint8)).resize(
+            (target_w_px, target_h_px), Image.BILINEAR
+        )
+        mask_img = Image.fromarray(asset.mask.astype(np.uint8) * 255).resize(
+            (target_w_px, target_h_px), Image.NEAREST
+        )
+        if obj.rotation_deg:
+            rgb_img = rgb_img.rotate(-obj.rotation_deg, expand=True, resample=Image.BILINEAR)
+            alpha_img = alpha_img.rotate(-obj.rotation_deg, expand=True, resample=Image.BILINEAR)
+            mask_img = mask_img.rotate(-obj.rotation_deg, expand=True, resample=Image.NEAREST)
+
+        patch_rgb = np.array(rgb_img, dtype=np.float32)
+        patch_alpha = np.array(alpha_img, dtype=np.float32) / 255.0
+        patch_mask = np.array(mask_img) >= 128
+        total_mask_px = int(patch_mask.sum())
+        ph, pw = patch_mask.shape
+
+        # Centre-anchored placement in crop pixels, then clip to the crop.
+        cx = (obj.position_m[0] - fx0) * px_per_m_x
+        cy = (obj.position_m[1] - fy0) * px_per_m_y
+        x0 = round(cx - pw / 2.0)
+        y0 = round(cy - ph / 2.0)
+        cx0, cy0 = max(0, x0), max(0, y0)
+        cx1, cy1 = min(w, x0 + pw), min(h, y0 + ph)
+        if cx1 <= cx0 or cy1 <= cy0:
+            return None  # entirely outside the crop
+        sx0, sy0 = cx0 - x0, cy0 - y0
+        sx1, sy1 = sx0 + (cx1 - cx0), sy0 + (cy1 - cy0)
+
+        alpha_clip = patch_alpha[sy0:sy1, sx0:sx1] * obj.opacity
+        alpha_clip = alpha_clip * valid[cy0:cy1, cx0:cx1]  # nothing renders onto nodata
+        rgb_clip = np.clip(patch_rgb[sy0:sy1, sx0:sx1] * obj.brightness_factor, 0, 255)
+
+        region = rgb[cy0:cy1, cx0:cx1].astype(np.float32)
+        blended = (1.0 - alpha_clip[..., None]) * region + alpha_clip[..., None] * rgb_clip
+        rgb[cy0:cy1, cx0:cx1] = np.clip(blended, 0, 255).astype(np.uint8)
+
+        inside = np.zeros((h, w), dtype=bool)
+        inside[cy0:cy1, cx0:cx1] = patch_mask[sy0:sy1, sx0:sx1] & valid[cy0:cy1, cx0:cx1]
+        visible_px = int(inside.sum())
+        stats["visible_px"] = float(visible_px)
+        stats["visible_fraction"] = visible_px / total_mask_px if total_mask_px > 0 else 0.0
+        return inside if visible_px > 0 else None
 
 
 def _object_masks(

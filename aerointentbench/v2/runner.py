@@ -204,7 +204,7 @@ class MissionRunner:
             scenario.world.meters_per_pixel,
             invalid_pixel_rule=scenario.world.invalid_pixel_rule,
         )
-        self._objects = ObjectLayer(scenario.objects)
+        self._objects = ObjectLayer(scenario.objects, assets=_load_scenario_assets(scenario))
         self._renderer = CameraRenderer(
             scenario_id=scenario.scenario_id,
             world=self._world,
@@ -498,6 +498,35 @@ def _catalog_from_specs(scenario: V2Scenario) -> ConfigCatalog:
         ],
         catalog_id=f"{scenario.scenario_id}_CONFIGS",
     )
+
+
+def _load_scenario_assets(scenario: V2Scenario):
+    """Load and validate the target-asset store when the scenario declares one.
+
+    Enforces the person-target rule here, where the manifest and the objects meet: an
+    image-asset *target* must reference a ``person``-category asset -- a scenario cannot
+    quietly score car cutouts as found people. Distractors may be any category.
+    """
+    if scenario.assets_manifest is None:
+        return None
+    from pathlib import Path
+
+    from aerointentbench.v2.assets import load_asset, load_manifest
+
+    manifest = load_manifest(Path(scenario.assets_manifest))
+    store = {}
+    for obj in scenario.objects:
+        if obj.render_mode != "image_asset":
+            continue
+        record = manifest.get(obj.asset_id)
+        if obj.is_target and record.category != "person":
+            raise SchemaValidationError(
+                f"target object {obj.object_id!r} references asset {obj.asset_id!r} of "
+                f"category {record.category!r}; person-target scenarios require 'person' "
+                "assets for targets"
+            )
+        store[obj.asset_id] = load_asset(record)
+    return store
 
 
 def _resolve_image_path(scenario: V2Scenario):

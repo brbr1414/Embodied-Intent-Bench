@@ -122,6 +122,8 @@ class CameraRenderer:
                 "position_m": list(position_m),
                 # Evaluator-only: lets scoring map GT instance ids back to object ids.
                 "instance_object_ids": self._objects.instance_object_ids,
+                # Evaluator/debug-only: physical->pixel projection stats per image asset.
+                "asset_projections": rendered.projections,
             },
         )
 

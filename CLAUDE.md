@@ -166,6 +166,18 @@ marker colours to exploit pretrained models, and never present V2.1 numbers as r
 aerial-human perception. `.venv` may be a symlink to `~/.venvs/aerointentbench` (large
 venvs inside the OneDrive-synced tree cause file-provider stalls).
 
+**V2.2 image-asset targets** (`aerointentbench/v2/assets.py`, `observability.py`,
+`docs/v2_design.md` §10.2): image targets need a strict manifest with truthful
+provenance — provider, license, `redistribution_allowed`, verified sha256, explicit
+physical dimensions, and a `view_type` that is never relabelled (`conventional` /
+`aerial` / `procedural`). Hard rules: **no scraped or unknown-license person imagery,
+ever**; no licensed human asset is committed (local ones are gitignored); GT always
+comes from the transformed asset mask, never from thresholding composited RGB; a
+zero-pixel projection is recorded, never enlarged; procedural silhouettes are test
+fixtures, never person-performance evidence; `evaluation_purpose`
+(`controlled_observability` / `integration_diagnostic`) results must never be presented
+as aerial-human perception. The V2.0 `procedural_marker` mode stays untouched.
+
 ## Commands
 
 ```bash

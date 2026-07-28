@@ -89,6 +89,29 @@ person models have never seen — V2.1 results are *integration* results under d
 domain mismatch, not real aerial-human perception performance. Energy remains simulated.
 Realistic aerial-person target assets are the next evaluation milestone.
 
+### V2.2: image-based human targets & controlled observability
+
+The target layer now supports **image assets**: an RGBA person cutout with verified
+provenance (license, redistribution permission, sha256) placed in world metres, composited
+with anti-aliased alpha while the **binary GT travels the exact same spatial transform**
+(never thresholded from RGB). A controlled observability experiment
+(`run-observability`) measures when the real models can see a target across size ×
+rotation × background, with per-condition pixel IoU/recall/FP and the evidence-rule
+verdict.
+
+```bash
+python -m aerointentbench.v2.cli validate-assets --manifest data/v2_assets/manifest.json
+python -m aerointentbench.v2.cli run-observability \
+  --config data/v2_scenarios/observability_img1.json --output results/v2_observability
+```
+
+**No licensed human asset ships with the repository** (`data/v2_assets/README.md` states
+what an owner must supply); until one exists, the experiment is blocked with an actionable
+error. A pipeline smoke with a clearly-labelled *procedural* silhouette ran the full
+matrix through both real models: empty person masks in all 18 conditions (3–37 projected
+px) — the pipeline works, and flat silhouettes at aerial scales are invisible to generic
+COCO/VOC models. That is a documented domain-gap finding, not model-performance evidence.
+
 ## The loop
 
 ```
