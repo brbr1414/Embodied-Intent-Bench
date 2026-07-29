@@ -174,6 +174,34 @@ def test_shipped_real_scenario_validates() -> None:
         assert spec.parameters["latency_mode"] == "measured"
 
 
+def test_shipped_hard_tradeoff_scenario_pins_its_design() -> None:
+    """The hard scenario's trade-off structure is deliberate; pin what makes it work.
+
+    The mission outcomes themselves need local assets + torch and live under
+    ``results/v2_hard`` (see docs/v2_design.md §10.5); this pins the machine-independent
+    design invariants so a casual edit cannot silently defuse the trade-off.
+    """
+    scenario = load_scenario(REPO / "data" / "v2_scenarios" / "demo_img1_hard_tradeoff.json")
+    assert scenario.config_ids == ("local_light_real", "local_strong_real")
+    light, strong = scenario.executor_configs
+    interval = scenario.simulation.observation_interval_s
+    # Deterministic missions: the clock runs on configured latency, never wall-clock.
+    assert {s.parameters["latency_mode"] for s in scenario.executor_configs} == {"configured"}
+    # Light processes every capture; strong skips every other one (the coverage cost)...
+    assert light.mission_latency_s < interval < strong.mission_latency_s
+    # ...but stays under the rule-based latency ceiling (1.5 intervals), so the adaptive
+    # policy genuinely prefers it until battery pressure bites.
+    assert strong.mission_latency_s <= 1.5 * interval
+    # Battery pressure is the adaptive switch driver: strong's stress-configured energy
+    # must dominate flight power at its 2-capture cadence.
+    assert strong.energy_j_per_call / (2 * interval) > scenario.drone.flight_power_w
+    assert len(scenario.targets) == 8
+    assert all(obj.render_mode == "image_asset" for obj in scenario.targets)
+    assert scenario.simulation.fallback_config_id == "local_light_real"
+    assert scenario.contract.quality_threshold == 0.7
+    assert scenario.evaluation_purpose == "controlled_observability"
+
+
 # --- executor behaviour on the fake backend --------------------------------------------------
 
 

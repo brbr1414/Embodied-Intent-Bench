@@ -372,6 +372,50 @@ python -m aerointentbench.v2.replay_export \
 # equivalently: python -m aerointentbench.v2.cli export-replay ...
 ```
 
+## 10.5 Hard trade-off scenario — where configuration selection decides the mission
+
+`data/v2_scenarios/demo_img1_hard_tradeoff.json` (`V2_IMG1_HARD_TRADEOFF`) is the first
+V2 scenario in which **no static configuration can succeed and an adaptive policy
+can** — the benchmark's core claim, made concrete with real pretrained models.
+
+**Design** (all invariants pinned by `test_shipped_hard_tradeoff_scenario_pins_its_design`):
+
+- Camera footprint 6×4.5 m at 256×192 px — the exact operating point validated by the
+  V2.2 Stage B observability matrix (42.7 px/m).
+- **Four small early targets** (0.75 m ground extent → 32 px, standing/walking): Stage B
+  showed LRASPP detects nothing standing/walking at ≤32 px while DeepLabV3 does. They
+  sit on the first two lanes with visibility windows covering even capture times.
+- **Four large late targets** (64–96 px): detectable by the light model, but their
+  ~1.5 s visibility windows (6 m footprint / 4 m/s) are centred on **odd** capture
+  times on the last lane. The strong executor's configured 1.4 s latency gives it a
+  2-capture cadence, so a static strong policy skips every one of them
+  (encountered-but-missed, the pinned V2 skip semantics).
+- **Stress-configured energy** (`energy_j_per_call`: strong 600 J — simulated,
+  modelling a power-hungry onboard accelerator): an always-strong policy also breaches
+  the 0.22 battery floor. Latency and energy are configured/simulated
+  (`latency_mode: "configured"`), so mission outcomes are deterministic and
+  machine-independent; wall-clock stays a diagnostic.
+
+**Measured outcomes** (local run, `results/v2_hard/`, torchvision official weights,
+mps device — outcomes deterministic given the configured clock):
+
+| policy | recall | battery | mission | why |
+|---|---|---|---|---|
+| `always_light_real` | 0.500 (4/8) | 0.748 | **FAIL** | quality: misses all 32 px targets (plus the −30° walker); 56 false positives |
+| `always_strong_real` | 0.500 (4/8) | 0.180 | **FAIL** | quality **and** battery: skips all four odd-window targets, drains the pack |
+| `rule_based` | **0.750 (6/8)** | 0.227 | **SUCCESS** | strong early (catches the small targets), one battery-pressure switch to light at ~t=42 s (catches E3/E4) |
+
+The adaptive win is emergent, not scripted: `rule_based` sees only the contract and
+the policy-visible state; its single switch comes from its battery-pressure rule
+(battery ≤ floor + 0.05). Honest footnotes: the light model *did* catch one 32 px
+standing target and missed one rotated 64 px walker — model reality, recorded as-is,
+and the trade-off holds regardless. The rule-based final battery clears the floor by
+only ~0.7 pt; that tightness is deliberate (the scenario is meant to punish a late
+switch) and stable because the mission clock is configured. Replay bundles for all
+three policies live under `results/v2_hard/replay_<policy>/` (local-only, composited
+human frames are never committed). As everywhere in V2.2: **synthetic generated
+human-target observability — never real aerial-human perception performance.**
+
 ## 11. Next steps
 
 Toward real models: implement a heavy `ImageExecutor` kind in an optional module
