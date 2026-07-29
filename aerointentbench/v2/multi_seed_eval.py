@@ -68,6 +68,17 @@ _FRAGILE_BATTERY_MARGIN: Final = 0.01
 # --- per-run records (restating the evaluator's outputs) -------------------------------------
 
 
+def _privacy_status(result: Any, scenario: Any) -> str:
+    """Privacy standing for a run: NOT_APPLICABLE where no remote path exists (V3 P1)."""
+    has_remote = any(
+        spec.kind == "simulated_remote" for spec in getattr(scenario, "executor_configs", ())
+    )
+    if not has_remote:
+        return "NOT_APPLICABLE"
+    satisfied = result.constraints.get("privacy_constraint_success", True)
+    return "satisfied" if satisfied else "violated"
+
+
 def run_record(result: Any, scenario: Any, seed: int) -> dict[str, Any]:
     """One structured record for a (scenario, policy) run.
 
@@ -95,7 +106,7 @@ def run_record(result: Any, scenario: Any, seed: int) -> dict[str, Any]:
         "policy": result.policy_name,
         "mission_success": result.mission_success,
         "constraints": dict(result.constraints),
-        "privacy_status": "NOT_APPLICABLE",
+        "privacy_status": _privacy_status(result, scenario),
         "termination_reason": result.termination_reason,
         "target_recall": quality["target_recall"],
         "detection_precision": quality["detection_precision"],

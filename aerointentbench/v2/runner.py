@@ -38,14 +38,20 @@ from aerointentbench.schemas.configuration import (
     Strategy,
 )
 from aerointentbench.schemas.loading import SchemaValidationError
-from aerointentbench.schemas.network_trace import NetworkObservation
 from aerointentbench.schemas.profile import PublicProfile, PublicProfileView, QualityTier
 from aerointentbench.schemas.runtime_state import EvidenceSummary, RuntimeState
-from aerointentbench.simulator.action_validator import ActionValidator
+from aerointentbench.simulator.action_validator import (
+    TRANSMITTED_PAYLOAD_PARAMETER,
+    ActionOutcome,
+    ActionValidator,
+    TransmittedPayload,
+)
 from aerointentbench.v2.camera import CameraRenderer, Observation
 from aerointentbench.v2.evaluation import MissionEvaluator
 from aerointentbench.v2.executors import ImageExecutionResult, build_executors
+from aerointentbench.v2.network import V2NetworkModel, constant_network_model
 from aerointentbench.v2.objects import ObjectLayer
+from aerointentbench.v2.remote import ExecutionContext
 from aerointentbench.v2.scenario import V2Scenario
 from aerointentbench.v2.trajectory import build_trajectory
 from aerointentbench.v2.world import open_world
@@ -120,6 +126,11 @@ class V2MissionResult:
     config_selection_history: tuple[str, ...]
     observations: list[ObservationLog] = field(default_factory=list)
     notes: dict[str, str] = field(default_factory=dict)
+    #: V3 P1 additions (additive; zero/empty for local-only missions).
+    privacy_violation_count: int = 0
+    failed_inference_count: int = 0
+    communication_energy_j: float = 0.0
+    network_behaviour: dict[str, int] = field(default_factory=dict)
 
     def to_dict(self, *, include_observations: bool = True) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -141,6 +152,10 @@ class V2MissionResult:
             "mean_executor_latency_s": self.mean_executor_latency_s,
             "config_selection_history": list(self.config_selection_history),
             "notes": dict(self.notes),
+            "privacy_violation_count": self.privacy_violation_count,
+            "failed_inference_count": self.failed_inference_count,
+            "communication_energy_j": self.communication_energy_j,
+            "network_behaviour": dict(self.network_behaviour),
         }
         if include_observations:
             payload["observations"] = [log.to_dict() for log in self.observations]
@@ -160,6 +175,16 @@ def build_policy(policy_name: str, scenario: V2Scenario):
         return StaticPolicy(by_kind["fast_weak"])
     if policy_name == "always_strong":
         return StaticPolicy(by_kind["slow_strong"])
+    if policy_name == "always_remote_strong":
+        candidates = [
+            spec.config_id for spec in scenario.executor_configs if spec.kind == "simulated_remote"
+        ]
+        if not candidates:
+            raise SchemaValidationError(
+                "policy 'always_remote_strong' needs a simulated_remote executor; "
+                "the scenario declares none"
+            )
+        return StaticPolicy(candidates[0])
     if policy_name in ("always_light_real", "always_strong_real"):
         wanted_tier = "low" if policy_name == "always_light_real" else "high"
         candidates = [
@@ -236,10 +261,11 @@ class MissionRunner:
             total_targets=len(scenario.targets),
             observation_interval_s=scenario.simulation.observation_interval_s,
         )
-        bandwidth, rtt, loss = scenario.simulation.network
-        self._network = NetworkObservation(
-            bandwidth_mbps=bandwidth, rtt_ms=rtt, packet_loss_frac=loss
-        )
+        if scenario.simulation.network_trace is not None:
+            self._network_model = V2NetworkModel(scenario.simulation.network_trace)
+        else:
+            bandwidth, rtt, loss = scenario.simulation.network
+            self._network_model = constant_network_model(bandwidth, rtt, loss)
 
     # -- the loop -----------------------------------------------------------------------
 
@@ -253,12 +279,24 @@ class MissionRunner:
         mission_time = 0.0
         energy_j = 0.0
         communication_mb = 0.0
+        communication_energy_j = 0.0
         battery_frac = 1.0
         current_config: str | None = None
         selections: list[str] = []
         logs: list[ObservationLog] = []
         skipped_ids: list[int] = []
         latencies: list[float] = []
+        privacy_violations = 0
+        failed_inferences = 0
+        network_behaviour = {
+            "remote_attempts": 0,
+            "remote_successes": 0,
+            "remote_failures": 0,
+            "remote_timeouts": 0,
+            "remote_unreachable": 0,
+            "remote_fallbacks": 0,
+            "privacy_rejections": 0,
+        }
         termination = TERMINATION_PATH_COMPLETE
         notes: dict[str, str] = {}
 
@@ -304,14 +342,47 @@ class MissionRunner:
             action = self._validator.validate(requested, current_config_id=current_config)
             config_id = action.config_id
             previous_config = current_config
+            if action.outcome is ActionOutcome.PRIVACY_VIOLATION:
+                # The attempt is recorded and the constraint fails on the record; the
+                # forbidden transfer itself is never simulated (V1 semantics).
+                privacy_violations += 1
+                network_behaviour["privacy_rejections"] += 1
 
+            executor = self._executors[config_id]
             try:
-                result: ImageExecutionResult = self._executors[config_id].run(observation.rgb)
+                if hasattr(executor, "run_with_context"):
+                    result: ImageExecutionResult = executor.run_with_context(
+                        observation.rgb,
+                        ExecutionContext(
+                            scenario_id=scenario.scenario_id,
+                            observation_id=schedule_index,
+                            capture_time_s=capture_time,
+                            deadline_s=contract.deadline_s,
+                            network=self._network_model.state_at(capture_time),
+                        ),
+                    )
+                else:
+                    result = executor.run(observation.rgb)
             except Exception as error:
                 termination = TERMINATION_EXECUTOR_FAILURE
                 notes["executor_failure"] = f"{type(error).__name__}: {error}"
                 mission_time = capture_time
                 break
+            if not result.success:
+                failed_inferences += 1
+            remote_info = (result.diagnostics or {}).get("remote_status")
+            if remote_info is not None:
+                network_behaviour["remote_attempts"] += 1
+                if remote_info == "success":
+                    network_behaviour["remote_successes"] += 1
+                else:
+                    network_behaviour["remote_failures"] += 1
+                if remote_info == "timeout":
+                    network_behaviour["remote_timeouts"] += 1
+                if remote_info == "unreachable":
+                    network_behaviour["remote_unreachable"] += 1
+                if (result.diagnostics or {}).get("fallback") is not None:
+                    network_behaviour["remote_fallbacks"] += 1
 
             completion_time = capture_time + result.mission_latency_s
             completion_position = self._trajectory.position_at(completion_time)
@@ -321,8 +392,11 @@ class MissionRunner:
             score = self._evaluator.update(observation, result.prediction_mask)
 
             elapsed = completion_time - mission_time
-            energy_j += flight_w * max(0.0, elapsed) + result.energy_j
+            energy_j += (
+                flight_w * max(0.0, elapsed) + result.energy_j + result.communication_energy_j
+            )
             communication_mb += result.communication_mb
+            communication_energy_j += result.communication_energy_j
             battery_frac = max(0.0, 1.0 - energy_j / capacity_j)
             latencies.append(result.mission_latency_s)
             selections.append(config_id)
@@ -363,6 +437,7 @@ class MissionRunner:
                     "config_switched": previous_config is not None and config_id != previous_config,
                     "fallback_used": not action.is_valid,
                     "action_reason": action.reason,
+                    "privacy_violations_so_far": privacy_violations,
                 }
             logs.append(
                 ObservationLog(
@@ -393,6 +468,10 @@ class MissionRunner:
             tuple(skipped_ids),
             latencies,
             notes,
+            privacy_violations=privacy_violations,
+            failed_inferences=failed_inferences,
+            communication_energy_j=communication_energy_j,
+            network_behaviour=network_behaviour,
         )
 
     # -- helpers ------------------------------------------------------------------------
@@ -420,7 +499,9 @@ class MissionRunner:
             frame_id=frame_id,
             battery_frac=battery_frac,
             power_mode="v2_fixed",
-            network=self._network,
+            # The current sample only -- the policy never sees the trace, the regime
+            # name, or anything about the future (V1 boundary, unchanged).
+            network=self._network_model.observation_at(time_s),
             current_config_id=current_config,
             remaining_deadline_s=self._scenario.contract.deadline_s - time_s,
             cumulative_energy_j=energy_j,
@@ -445,6 +526,11 @@ class MissionRunner:
         skipped_ids: tuple[int, ...],
         latencies: list[float],
         notes: dict[str, str],
+        *,
+        privacy_violations: int = 0,
+        failed_inferences: int = 0,
+        communication_energy_j: float = 0.0,
+        network_behaviour: dict[str, int] | None = None,
     ) -> V2MissionResult:
         contract = self._scenario.contract
         quality = self._evaluator.quality_details(mission_time_s=mission_time)
@@ -455,6 +541,9 @@ class MissionRunner:
             "battery_constraint_success": battery_frac >= contract.min_final_battery_frac,
             "communication_constraint_success": communication_mb
             <= contract.communication_budget_mb,
+            # V3 P1: the fifth hard constraint, aligned with V1 -- a blocked forbidden
+            # selection still counts as a violation attempt.
+            "privacy_constraint_success": privacy_violations == 0,
         }
         quality["quality_metric"] = contract.quality_metric
         quality["quality_value"] = quality_value
@@ -484,6 +573,10 @@ class MissionRunner:
             config_selection_history=tuple(selections),
             observations=logs,
             notes=notes,
+            privacy_violation_count=privacy_violations,
+            failed_inference_count=failed_inferences,
+            communication_energy_j=communication_energy_j,
+            network_behaviour=dict(network_behaviour or {}),
         )
 
     # Exposed for the CLI/visualiser/replay exporter so they render through the same
@@ -504,8 +597,26 @@ class MissionRunner:
     def objects(self) -> ObjectLayer:
         return self._objects
 
+    @property
+    def network_model(self) -> V2NetworkModel:
+        return self._network_model
+
     def executor_for(self, config_id: str):
         return self._executors[config_id]
+
+    def execution_context_at(self, capture_time_s: float, observation_id: int) -> ExecutionContext:
+        """The exact execution context a mission used at ``capture_time_s``.
+
+        Exposed so the replay exporter re-runs a remote executor with the same network
+        sample the mission saw -- deterministic under the Model-A transport.
+        """
+        return ExecutionContext(
+            scenario_id=self._scenario.scenario_id,
+            observation_id=observation_id,
+            capture_time_s=capture_time_s,
+            deadline_s=self._scenario.contract.deadline_s,
+            network=self._network_model.state_at(capture_time_s),
+        )
 
     def render_at(self, capture_time_s: float, observation_id: int = -1) -> Observation:
         return self._renderer.render(
@@ -528,13 +639,29 @@ class _PolicyFailure:
 
 
 def _catalog_from_specs(scenario: V2Scenario) -> ConfigCatalog:
-    """A V1 catalog view of the scenario's executor configs, for validation and policies."""
+    """A V1 catalog view of the scenario's executor configs, for validation and policies.
+
+    A ``simulated_remote`` config carries REMOTE placement and explicitly declares that
+    it transmits raw input, so the frozen V1 privacy logic (`privacy_permits`) applies
+    verbatim: forbidden under ``local_only`` and -- because raw is not features -- under
+    ``features_only`` too.
+    """
     return ConfigCatalog(
         [
             Configuration(
                 config_id=spec.config_id,
                 model_id=spec.model_strategy_id,
-                strategy=Strategy(placement=Placement.LOCAL, precision=Precision.FP32),
+                strategy=Strategy(
+                    placement=(
+                        Placement.REMOTE if spec.kind == "simulated_remote" else Placement.LOCAL
+                    ),
+                    precision=Precision.FP32,
+                    parameters=(
+                        {TRANSMITTED_PAYLOAD_PARAMETER: TransmittedPayload.RAW_INPUT.value}
+                        if spec.kind == "simulated_remote"
+                        else {}
+                    ),
+                ),
             )
             for spec in scenario.executor_configs
         ],

@@ -178,6 +178,26 @@ fixtures, never person-performance evidence; `evaluation_purpose`
 (`controlled_observability` / `integration_diagnostic`) results must never be presented
 as aerial-human perception. The V2.0 `procedural_marker` mode stays untouched.
 
+**V3 P1 remote inference + dynamic network + privacy** (`aerointentbench/v2/remote.py`,
+`network.py`, `docs/v3_design.md`): the `simulated_remote` executor kind runs behind
+deployment-ready boundaries (`InferenceTransport` / `RemoteInferenceBackend` /
+`run_with_context`) — a future Jetson client + real server replaces the simulated pair
+without touching runner/policy/evaluator. Rules: remote latency is DERIVED (Model A:
+capture-time network snapshot; formula and per-stage breakdown in docs — never one
+opaque constant); uploads are charged even on failure (partial transfers
+proportionally); communication energy = configured J/MB + activation, charged on every
+attempt, distinct from compute/flight energy; a failed remote attempt is
+`success=False` + status, never a silent empty prediction; executor-level fallback runs
+on the SAME captured frame with both attempts on the mission clock; the scenario-level
+safe fallback must be local. `network_trace` = named piecewise-constant regimes; the
+policy sees only the current sample as the frozen V1 `NetworkObservation` (no regime
+names, no futures). **V2 mission success is now the 5-constraint AND incl. privacy**
+(V1 `privacy_permits` verbatim: remote raw-RGB configs are forbidden under `local_only`
+AND `features_only`; blocked selections are counted violations). Local-only scenarios
+keep their outcomes (pinned). Protocol models are wire-representable
+(`protocol_version "1.0"`). No real server/RPC/Jetson in this milestone; nothing here
+is a hardware claim.
+
 **V2.4 multi-seed evaluation** (`aerointentbench/v2/scenario_family.py`,
 `multi_seed_eval.py`, `docs/v2_design.md` §10.6): the hard scenario generalises to a
 deterministic family — every variant is a pure function of (family version, base id,
