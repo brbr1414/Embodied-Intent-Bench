@@ -176,6 +176,7 @@ def export_replay_bundle(scenario_path: Path, policy_name: str, output_dir: Path
     render_overview(
         scenario, runner.world, runner.trajectory, runner.objects, output_dir / "overview.png"
     )
+    background = _write_map_background(runner, scenario, output_dir, Image)
 
     events: list[dict[str, Any]] = []
     found_ids: set[str] = set()
@@ -227,7 +228,9 @@ def export_replay_bundle(scenario_path: Path, policy_name: str, output_dir: Path
             "notes": dict(result.notes),
         },
     }
-    manifest = _build_manifest(scenario, scenario_path, result, len(events), len(skipped))
+    manifest = _build_manifest(
+        scenario, scenario_path, result, len(events), len(skipped), runner, background
+    )
 
     _dump_json(output_dir / "events.json", events_doc)
     _dump_json(output_dir / "manifest.json", manifest)
@@ -333,6 +336,43 @@ def _build_event(
     }
 
 
+#: Longest edge of the pre-rendered mission-map background, in pixels.
+_MAP_BACKGROUND_MAX_PX: Final = 1600
+
+
+def _write_map_background(
+    runner: MissionRunner, scenario: V2Scenario, output_dir: Path, image_module: Any
+) -> dict[str, Any]:
+    """Pre-render the mission area from the mission's own world source.
+
+    This is the viewer's map background: the real aerial raster (or test image) the
+    mission flew over, read through the same ``read_window_m`` the camera uses, so the
+    trajectory overlays register exactly. The extent comes from the trajectory alone,
+    padded by one camera footprint — never from ground-truth object placement. The
+    bundle stays self-contained and offline: no tiles, no external map service.
+    """
+    xs = [p[0] for p in runner.trajectory.waypoints_m]
+    ys = [p[1] for p in runner.trajectory.waypoints_m]
+    pad_x = scenario.camera.footprint_width_m
+    pad_y = scenario.camera.footprint_height_m
+    x0, x1 = min(xs) - pad_x, max(xs) + pad_x
+    y0, y1 = min(ys) - pad_y, max(ys) + pad_y
+    width_m, height_m = x1 - x0, y1 - y0
+    scale = min(_MAP_BACKGROUND_MAX_PX / width_m, _MAP_BACKGROUND_MAX_PX / height_m)
+    out_w = max(64, round(width_m * scale))
+    out_h = max(64, round(height_m * scale))
+    read = runner.world.read_window_m(
+        ((x0 + x1) / 2.0, (y0 + y1) / 2.0), width_m, height_m, out_w, out_h
+    )
+    image_module.fromarray(read.rgb).save(output_dir / "map_background.png")
+    return {
+        "file": "map_background.png",
+        "extent_m": [x0, y0, x1, y1],
+        "width_px": out_w,
+        "height_px": out_h,
+    }
+
+
 def _write_frames(
     runner: MissionRunner, log: ObservationLog, frames_dir: Path, image_module: Any
 ) -> dict[str, str]:
@@ -402,6 +442,8 @@ def _build_manifest(
     result: V2MissionResult,
     event_count: int,
     skipped_count: int,
+    runner: MissionRunner,
+    background: dict[str, Any],
 ) -> dict[str, Any]:
     contract = scenario.contract
     found = {
@@ -439,11 +481,17 @@ def _build_manifest(
             for spec in scenario.executor_configs
         ],
         "map": {
-            "waypoints_m": [list(p) for p in _trajectory_waypoints(scenario)],
+            "waypoints_m": [list(p) for p in runner.trajectory.waypoints_m],
             "footprint_width_m": scenario.camera.footprint_width_m,
             "footprint_height_m": scenario.camera.footprint_height_m,
             "meters_per_pixel": scenario.world.meters_per_pixel,
             "observation_interval_s": scenario.simulation.observation_interval_s,
+            # Added after the initial 1.0 bundles, before any release: the viewer's
+            # registration frame and mission-time interpolation basis. All additive;
+            # the viewer falls back to schematic drawing / discrete stepping if absent.
+            "background": background,
+            "drone_speed_mps": scenario.drone.speed_mps,
+            "trajectory_duration_s": runner.trajectory.duration_s,
         },
         "matching_iou_threshold": scenario.simulation.matching_iou_threshold,
         "debug_gt": {
@@ -464,6 +512,7 @@ def _build_manifest(
         "files": {
             "events": "events.json",
             "overview": "overview.png",
+            "map_background": "map_background.png",
             "viewer": "index.html",
             "frames_dir": "frames",
         },
@@ -478,12 +527,6 @@ def _build_manifest(
             ),
         },
     }
-
-
-def _trajectory_waypoints(scenario: V2Scenario) -> tuple[tuple[float, float], ...]:
-    from aerointentbench.v2.trajectory import build_trajectory
-
-    return build_trajectory(scenario.trajectory, scenario.drone.speed_mps).waypoints_m
 
 
 def _dump_json(path: Path, payload: dict[str, Any]) -> None:

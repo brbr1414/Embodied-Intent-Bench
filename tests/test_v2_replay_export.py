@@ -229,8 +229,51 @@ def test_bundle_contains_required_files(bundle: Path) -> None:
     assert (bundle / "manifest.json").is_file()
     assert (bundle / "events.json").is_file()
     assert (bundle / "overview.png").is_file()
+    assert (bundle / "map_background.png").is_file()
     assert (bundle / "index.html").is_file()
     assert list((bundle / "frames").glob("*.png"))
+
+
+def test_map_background_is_registered_to_the_mission_extent(bundle: Path) -> None:
+    from PIL import Image
+
+    manifest = json.loads((bundle / "manifest.json").read_text())
+    background = manifest["map"]["background"]
+    assert background["file"] == manifest["files"]["map_background"] == "map_background.png"
+    x0, y0, x1, y1 = background["extent_m"]
+    assert x1 > x0 and y1 > y0
+    # The extent must cover the whole trajectory (it is the viewer's coordinate frame).
+    for wx, wy in manifest["map"]["waypoints_m"]:
+        assert x0 <= wx <= x1 and y0 <= wy <= y1
+    with Image.open(bundle / background["file"]) as image:
+        assert image.size == (background["width_px"], background["height_px"])
+
+
+def _point_at_distance(waypoints: list[list[float]], distance: float) -> tuple[float, float]:
+    """The viewer's interpolation rule, restated: constant speed along the polyline."""
+    travelled = 0.0
+    for (ax, ay), (bx, by) in itertools.pairwise(waypoints):
+        segment = ((bx - ax) ** 2 + (by - ay) ** 2) ** 0.5
+        if distance <= travelled + segment or segment == 0.0:
+            fraction = 0.0 if segment == 0.0 else (distance - travelled) / segment
+            fraction = min(max(fraction, 0.0), 1.0)
+            return (ax + (bx - ax) * fraction, ay + (by - ay) * fraction)
+        travelled += segment
+    return (waypoints[-1][0], waypoints[-1][1])
+
+
+def test_manifest_interpolation_basis_reproduces_the_trajectory(bundle: Path) -> None:
+    """The viewer's smooth motion must land exactly on the simulator's positions."""
+    manifest = json.loads((bundle / "manifest.json").read_text())
+    events = json.loads((bundle / "events.json").read_text())["events"]
+    speed = manifest["map"]["drone_speed_mps"]
+    waypoints = manifest["map"]["waypoints_m"]
+    assert speed > 0 and manifest["map"]["trajectory_duration_s"] > 0
+    for event in events:
+        expected = _point_at_distance(waypoints, speed * event["capture_time_s"])
+        assert expected == pytest.approx(tuple(event["capture_position_m"]), abs=1e-9)
+        expected = _point_at_distance(waypoints, speed * event["completion_time_s"])
+        assert expected == pytest.approx(tuple(event["completion_position_m"]), abs=1e-9)
 
 
 def test_bundle_declares_the_replay_schema_version(bundle: Path) -> None:
@@ -283,6 +326,7 @@ def test_export_is_deterministic_apart_from_wall_clock(make_scenario, tmp_path: 
     ev_a = _strip_wall_clock(json.loads((a / "events.json").read_text()))
     ev_b = _strip_wall_clock(json.loads((b / "events.json").read_text()))
     assert ev_a == ev_b
+    assert (a / "map_background.png").read_bytes() == (b / "map_background.png").read_bytes()
     for frame in sorted((a / "frames").glob("*.png")):
         assert frame.read_bytes() == (b / "frames" / frame.name).read_bytes()
 
@@ -341,3 +385,14 @@ def test_viewer_has_required_panels_and_controls(bundle: Path) -> None:
     assert "Debug GT" in html  # GT is debug-only, and labelled as such
     # Hierarchy: the dashboard names perception explicitly subordinate.
     assert "subordinate to mission outcome" in html
+
+
+def test_viewer_uses_the_map_background_and_continuous_playback(bundle: Path) -> None:
+    html = (bundle / "index.html").read_text()
+    payload = _embedded_payload(html)
+    background = payload["manifest"]["map"]["background"]
+    assert (bundle / background["file"]).is_file()
+    assert payload["manifest"]["map"]["drone_speed_mps"] > 0
+    # The playback loop is mission-time based, not per-observation stepping.
+    assert "requestAnimationFrame" in html
+    assert "pointAtDistance" in html

@@ -339,11 +339,29 @@ executor or remote configuration is introduced.
 **Viewer** (`replay_viewer.py`): one self-contained HTML page, plain HTML/CSS/JS, no
 framework, no build step; the replay JSON is embedded in the page and frames load by
 relative path, so it works from `file://` (or `python -m http.server --directory
-<bundle>`). Panels: mission map (trajectory, completed/remaining path, UAV, processed/
-skipped/detection positions), current perception view (RGB + prediction overlay;
-ground truth only behind an explicit **Debug GT** toggle), and the mission dashboard in
-the hierarchy above. Timeline: prev/next, play/pause, slider, speed control, and a
-config-selection strip over mission time.
+<bundle>`). Panels: a **map-dominant layout** — the mission map (top, ~2/3 width) over
+the current perception view (RGB + prediction overlay; ground truth only behind an
+explicit **Debug GT** toggle), with the mission dashboard below in the hierarchy above.
+Timeline: prev/next, play/pause, slider, speed control (0.5–8×), and a config-selection
+strip over mission time.
+
+**Map background & smooth playback** (additive `manifest.map` fields, still
+`replay_schema_version "1.0"`; added before any release and the viewer falls back to
+schematic drawing / discrete stepping when absent):
+
+- `map.background` — `{file, extent_m: [x0,y0,x1,y1], width_px, height_px}`: a
+  pre-rendered crop of the mission's own world raster (through the same
+  `read_window_m` the camera uses), so the trajectory registers exactly on the real
+  mission environment. The extent derives from the trajectory padded by one camera
+  footprint — never from ground-truth object placement. No tiles, no online map
+  service; the bundle stays offline-capable.
+- `map.drone_speed_mps` + `map.trajectory_duration_s` — the viewer's interpolation
+  basis. Playback advances a **mission-time clock** (`requestAnimationFrame`; 1× =
+  real mission seconds) and interpolates the UAV position with the simulator's own
+  rule (constant speed along the waypoint polyline, clamped), while observation
+  panels, detections, and skip markers switch exactly at their event times. A test
+  pins that this interpolation reproduces every logged capture/completion position.
+  Smooth motion is presentation only — mission semantics live in the events.
 
 Usage:
 
