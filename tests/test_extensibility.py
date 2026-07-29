@@ -226,10 +226,10 @@ def test_criterion_3_the_executor_is_swappable(data_root: Path, contract) -> Non
         contract=contract,
         policy_name="always_local_light",
         executor=ReplayExecutor(records),
-        executor_name="replay",
     )
 
-    assert result.record.executor_name == "replay"
+    # Provenance is read from the executor object, not supplied alongside it.
+    assert result.record.executor_id == "replay"
     assert result.record.failed_inference_count == 0
     assert result.record.step_count == 900
 

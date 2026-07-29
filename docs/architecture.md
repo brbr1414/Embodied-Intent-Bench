@@ -44,27 +44,36 @@ use, a test, or an immediate replacement scenario.
 
 ```python
 class Policy(Protocol):
-    def select_config(self, contract: Contract, state: RuntimeState,
-                      configs: ConfigCatalog) -> str: ...
+    def select_config(
+        self, contract: Contract, state: RuntimeState, configs: ConfigCatalog
+    ) -> str: ...
+
 
 class Executor(Protocol):
     def execute(self, request: ExecutionRequest) -> ExecutionResult: ...
 
+
 class TaskEvaluator(Protocol):
-    def evaluate(self, evidence: EvidenceRecord, ground_truth: GroundTruth,
-                 contract: Contract) -> TaskEvaluationResult: ...
+    def evaluate(
+        self, evidence: EvidenceRecord, ground_truth: GroundTruth, contract: Contract
+    ) -> TaskEvaluationResult: ...
+
 
 class EvidenceTracker(Protocol):
     def update(self, result: ExecutionResult) -> None: ...
     def policy_summary(self) -> EvidenceSummary: ...
     def final_record(self) -> EvidenceRecord: ...
 
+
 class BatteryModel(Protocol):
-    def transition(self, previous_state: BatteryState, usage: EnergyUsage,
-                   elapsed_time_s: float) -> BatteryState: ...
+    def transition(
+        self, previous_state: BatteryState, usage: EnergyUsage, elapsed_time_s: float
+    ) -> BatteryState: ...
+
 
 class NetworkModel(Protocol):
     def observe(self, time_s: float) -> NetworkObservation: ...
+
 
 class TerminationCondition(Protocol):
     def check(self, state: SimulationState, contract: Contract) -> TerminationReason | None: ...
@@ -80,8 +89,8 @@ Lightweight, explicit Python registries — no entry-point systems, no dynamic p
 discovery. Each maps a key to a factory:
 
 ```python
-task     = task_registry.create(contract.task_id, task_spec)
-policy   = policy_registry.create(policy_name, policy_config)
+task = task_registry.create(contract.task_id, task_spec)
+policy = policy_registry.create(policy_name, policy_config)
 executor = executor_registry.create(executor_type, profiles)
 ```
 

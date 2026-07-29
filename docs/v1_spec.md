@@ -460,7 +460,132 @@ adaptation. Whether to raise it so that only adaptive policies pass is a **calib
 deferred to `feature/v1-policies`**, when real policies exist to calibrate against; tuning
 difficulty against hand-written strategy stubs would be fitting the benchmark to its own probe.
 
-### 4.15 Shipped fixtures
+### 4.15 Empirical mask replay
+
+§4.12 precomputes `mask_iou`: synthesis decides, per `(seed, frame_id, config_id, track_id)`,
+whether a target is detected and what its overlap "would have been". **Empirical mask replay**
+replaces that stand-in with real masks and a real IoU, without adding a model or a dataset —
+the masks are recorded (here, synthetic), the way a hardware capture would eventually supply
+them.
+
+Which path scores an episode is decided by the **ground-truth form**, never by the executor.
+A ground-truth file declaring per-frame `frames` of masks is scored empirically; one
+declaring visibility `targets` (§4.12) is scored by the precomputed scalar. The two may sit
+side by side in one `ground_truth/` directory; each file states which it is.
+
+**Mask ground truth** — hidden, never policy-visible — carries one mask per target per frame.
+A target keeps its `track_id` across frames; `ignore: true` marks a region excluded from the
+target total and from penalising overlapping predictions.
+
+```json
+{
+  "schema_version": "1.0",
+  "frame_stream_id": "EXAMPLE_STREAM",
+  "task_id": "HUMAN_SEARCH_SEGMENTATION",
+  "frames": [
+    { "frame_id": 0, "instances": [
+        { "track_id": "GT_A", "category": "person",
+          "mask": { "height": 8, "width": 8, "rows": ["00000000","01111000", "..."] } }
+    ] }
+  ]
+}
+```
+
+**Empirical predictions** ride inside a normal replay record's opaque `prediction` payload,
+so the replay schema itself is unchanged. Each instance carries `prediction_id`, `category`,
+`confidence`, and a `mask`; it must **not** carry `ground_truth_track_id` (a prediction may
+not name its answer) and any `mask_iou` on the wire is ignored, never trusted.
+
+**Mask encoding.** One explicit, versioned form: `{ "height", "width", "rows" }`, one `'0'`/
+`'1'` string per row. Dimensions are stated and recoverable; a ragged, mis-sized, or
+bad-character bitmap is rejected. It decodes to a boolean pixel set — the canonical internal
+mask. Other encodings (COCO RLE, polygons) would decode to the same type; none is needed in
+V1. `mask_iou = |A ∩ B| / |A ∪ B|`; different dimensions raise rather than compare, and two
+empty masks score `0.0` (no positive evidence of a target).
+
+**Matching** is deterministic and one-to-one per frame: build the prediction × target IoU
+matrix, keep pairs clearing the task spec's threshold (0.50), assign greedily by IoU
+descending with identifier tie-breaks. Each prediction and each target pairs at most once.
+Greedy rather than optimal (Hungarian) — V1 has no array or `scipy` dependency and the
+per-frame instance counts are tiny; the limitation and its tie-breaking are tested.
+
+**Scoring keeps two counting units strictly apart** — the fix that this metric semantics
+depends on. Mixing them (unique-track TP over frame-level FP) produces a number in neither
+unit, so the empirical path reports two families and never divides one into the other:
+
+| Metric | Unit | Definition |
+|---|---|---|
+| `target_recall` (canonical mission metric) | mission, **track-level** | `unique_targets_found / total_unique_targets` — a track matched on any frame is one find, deduplicated by hidden `track_id` |
+| `detection_precision` | frame, **detection-level** | `matched_detections / total_predictions` (non-ignored predictions) |
+| `false_positive_detections` | frame | unmatched, non-absorbed detections (count) |
+| `false_positives_per_processed_minute` | frame / examined footage | `false_positive_detections` per minute of *processed frames* at the nominal 1 fps — detection-error density of what was looked at (from the evaluator) |
+| `false_positives_per_mission_minute` | frame / wall-clock | `false_positive_detections` per minute of *mission completion time* (added by the episode metrics, which know the clock); zero-duration ⇒ `0.0` |
+
+**Track-level precision and F1 are not computed.** They require a prediction associated with
+a persistent predicted *track* across frames; independent per-frame masks carry no such
+identity (a per-frame `prediction_id` is not a track). They appear in the result as `null`
+with `track_level_metrics_available: false` and a stated reason — never a mixed-unit number
+under a track-level name. A contract may therefore score empirical missions on `target_recall`
+(canonical) or `detection_precision`; asking for `target_precision`/`target_f1` fails loudly.
+The example empirical contract uses `target_recall`. The precomputed path is unchanged and
+still produces the track-level `QualityScores` (`target_precision`/`target_f1`).
+
+**Provenance.** An empirically scored result is tagged `quality_evaluation:
+"empirical_mask_iou"` in its quality details. With `executor_id`, this separates the three
+sources a result can have: synthetic profile (`profile`, no tag), legacy scalar replay
+(`replay`, no tag), and empirical mask replay (`replay`, tagged).
+
+A tiny worked example ships under `data/examples/empirical_replay/` (8×8 masks, three tracked
+people): one exact match, one partial match above threshold, one below-threshold detection,
+one false positive, one missed target, one ignore region, and predictions under two configs
+with differing latency and energy. It scores, by hand and in code, `target_recall 2/3`
+(`unique_targets_found 2 / total 3`), `detection_precision 0.6` (`matched_detections 3 /
+total_predictions 5`), `false_positive_detections 2`, `false_positives_per_processed_minute
+40.0`, and `target_f1 null`. Run to termination through the CLI, the wall-clock
+`false_positives_per_mission_minute` is `30.0` (the deadline admits one empty frame past the
+last ground-truth frame, so 4.0 s of mission time), which is exactly why each rate is named
+for its denominator.
+
+### 4.16 Building empirical bundles from external data
+
+§4.15 consumes a hand-authored bundle. The **bundle builder**
+(`aerointentbench.tools.build_empirical_bundle`) is the bridge from *real* externally
+produced data into that same format, so a researcher can run any model outside the benchmark
+and convert its outputs without touching `EpisodeRunner`, `ReplayExecutor`, or the evaluator.
+It executes no model and measures no hardware — it ingests, validates, and packages.
+
+**Inputs.** A versioned manifest points at three source families (all stdlib-parseable, no
+image-decoding dependency): a ground-truth JSON of per-frame mask instances; per-configuration
+predictions as JSON Lines (`frame_id`, `prediction_id`, `category`, `confidence`, `mask` —
+rejected if they carry a ground-truth track id or an on-the-wire `mask_iou`); and
+per-configuration measurements as CSV (`frame_id, success, latency_s, compute_energy_j,
+upload_mb, download_mb, failure_reason`). A blank required latency or energy cell is an error,
+never a silent zero. The manifest also carries the mission scaffolding (platform, path,
+network, contract — with defaults) and honest **provenance**: `data_origin`, and per config
+`prediction_provenance` and `measurement_provenance`, so a hand-authored or estimated value is
+never packaged as `measured`.
+
+**Output.** A self-contained data root — configs, platform, profiles, path, network trace,
+task spec, episode, contract, hidden mask ground truth, one replay record set, a frame
+manifest, and a `provenance.json` — that the ordinary CLI runs with `--executor replay` and
+no new flags. Policy-facing nominal profile costs are means of the supplied measurements,
+marked as derived scaffolding, not a separate measurement.
+
+**Coverage** is explicit. `strict` (the default) requires a measurement for every declared
+`frame × config`; `sparse` converts a declared-but-missing pair into an explicit failed
+replay record (`no_prediction_available`), matching `ReplayExecutor`'s own gap semantics. A
+missing pair is never silently dropped.
+
+**Determinism and safety.** Records are ordered by `(frame_id, config_id)`, ground truth by
+`(frame_id, track_id)`, JSON written sorted; two builds of the same sources are byte-identical
+but for one provenance `created_at` field (pinned with `--created-at`). Every generated file's
+SHA-256 is recorded in the provenance manifest. Source paths resolve under the manifest's
+directory and a `..` that escapes it is rejected. `validate_empirical_bundle` re-checks a
+built bundle independently — schemas, config references, mask dimensions, no GT identity in
+predictions, finite non-negative costs, coverage, and provenance counts and hashes against
+what is on disk — accumulating every error rather than stopping at the first.
+
+### 4.17 Shipped fixtures
 
 | File | Contents |
 |---|---|
@@ -475,11 +600,14 @@ difficulty against hand-written strategy stubs would be fitting the benchmark to
 | `data/predictions/synthetic_replay_example.json` | A four-record replay set exercising the replay backend |
 | `data/ground_truth/synthetic_human_search_stream_001.json` | 20 targets over STREAM_001: 4 sustained, 6 brief, 10 fleeting |
 | `data/episodes/episode_00{1,2,3}*.json` | One episode per network condition |
+| `data/examples/empirical_replay/` | A self-contained mini data root for §4.15: mask ground truth, a mask replay set, and its episode/contract. Synthetic correctness example, not a dataset |
+| `data/examples/empirical_source/` | Source-format inputs for §4.16 (manifest, ground-truth JSON, prediction JSONL, measurement CSV) that the bundle builder converts into a runnable bundle. Synthetic; tests conversion correctness only |
 
 Files whose numbers are invented rather than chosen — platform profiles, network traces,
 and later configuration profiles, predictions, and ground truth — are named `synthetic_*`
 so a value lifted out of this repository cannot be mistaken for a measurement. A test
-enforces the naming.
+enforces the naming. The empirical-replay example lives under its own `data/examples/`
+root so it neither joins the shipped suite nor changes any pinned baseline.
 
 ## 5. Policy action and validation
 
@@ -498,8 +626,19 @@ An action is invalid if it is not a string at all, if the ID is unknown, if it i
 
 - record an invalid-action violation;
 - if a valid current config exists, keep it;
-- otherwise use the configurable safe fallback (default `CFG_LOCAL_LIGHT`);
+- otherwise use the **resolved safe fallback**;
 - **never** crash the benchmark because of one invalid action.
+
+**Fallback resolution (model-agnostic).** The fallback is resolved by the composition root
+*before* the episode starts (`benchmark.resolve_fallback_config_id`), not hard-coded to any
+configuration name, so a data root built with its own configuration IDs is not obliged to
+contain `CFG_LOCAL_LIGHT`. Precedence: **(1)** an explicit `--fallback-config-id` override;
+**(2)** the episode's optional `fallback_config_id`; **(3)** the episode's `initial_config_id`
+if usable; **(4)** the legacy `CFG_LOCAL_LIGHT` only when present and usable; **(5)** otherwise
+fail before step 0, requiring an explicit fallback. A fallback *supplied* at (1) or (2) but
+unusable is an error, not a fall-through. "Usable" means present in the catalog, in the allowed
+pool, and permitted by the privacy level — never an arbitrary "first configuration in the
+catalog". The resolved fallback is validated once more at `ActionValidator` construction.
 
 The current configuration is re-checked before being kept: an episode's declared
 `initial_config_id` never passed through validation, so it may itself be disallowed or
@@ -551,6 +690,33 @@ A failed remote execution still charges `onboard_energy_j` — the vehicle captu
 encoded the frame before discovering it could not send it — but counts **zero**
 communication, since nothing reached the server. Packet loss is recorded in the step log
 and applies no latency penalty: V1 models no retransmission.
+
+## 7b. Execution backends
+
+`--executor` selects how a chosen configuration becomes an `ExecutionResult`. The
+`EpisodeRunner` depends only on the generic `Executor` interface; it never branches on the
+backend. Construction goes through the executor registry, from a uniform `ExecutorContext`,
+so the composition root — not the runner — owns backend-specific loading.
+
+| Backend | Behaviour | Provenance |
+|---|---|---|
+| `profile` (default) | Costs synthesised from the per-platform profile plus the §7 remote-latency model. All values synthetic. | `profile` |
+| `replay` | Serves precomputed `frame × config` records loaded from `data/predictions/`, resolved by the episode's `episode_id`. | `replay` |
+| `real_segmentation` | V1 stub. **Construction raises**, so selection fails before step 0 with *"not implemented in V1. Use profile or replay."* | — |
+
+**Replay resolution.** A record set declares the `episode_id` it was recorded from; a data
+root holds at most one set per episode, checked at load. Selecting `replay` for an episode
+with no set is an error naming how to record one — never a silent fall back to `profile`,
+which would mix two provenances in one run. A missing individual record is a recorded failed
+inference by default (a slow policy can skip frames), or an error under `--replay-strict`.
+
+**Recording.** `python -m aerointentbench.tools.record_replay` captures a full-coverage set
+from the profile executor. This is capture, not fabrication: it writes down exactly what the
+profile run produced. It keeps only policy-visible prediction fields, so a replayed run
+reproduces the profile run's resources exactly while quality scores as all-false-positive —
+replay is exact for the plumbing, and a set that retained the hidden fields would be needed
+to reproduce a quality score. When real models arrive, a hardware capture emits this same
+format and nothing downstream changes.
 
 ## 8. Battery
 
@@ -710,36 +876,67 @@ optimisation-based policy has something meaningful to beat.
 
 ### Measured Mission Success Rate
 
-Across the three shipped episodes under `contract_001` (`target_f1 >= 0.80`, 400 MB, 20 %
-reserve):
+Over the three shipped episodes under `contract_001` (`target_f1 >= 0.85`, 400 MB, 20 %
+reserve), pooled over 50 seeds per episode (**n = 150**):
 
-| Policy | EP1 | EP2 | EP3 | MSR |
-|---|---|---|---|---:|
-| `always_local_light` | fail | fail | fail | **0 %** |
-| `always_local_strong` | pass | fail | pass | **67 %** |
-| `always_remote_strong` | fail | fail | fail | **0 %** |
-| `rule_based` | pass | pass | pass | **100 %** |
-| `rule_based` (profiles hidden) | fail | fail | fail | **0 %** |
+| Policy | MSR | 95 % CI | mean F1 | quality | comms |
+|---|---:|---|---:|---:|---:|
+| `always_local_light` | **0.7 %** | [0.1, 3.7] | 0.682 | 1 % | 100 % |
+| `always_local_strong` | **64.7 %** | [56.7, 71.9] | 0.862 | 65 % | 100 % |
+| `always_remote_strong` | **0.0 %** | [0.0, 2.5] | 0.878 | 64 % | **0 %** |
+| `rule_based` | **78.0 %** | [70.7, 83.9] | 0.883 | 78 % | 100 % |
+| `rule_based` (profiles hidden) | **0.7 %** | [0.1, 3.7] | 0.682 | 1 % | 100 % |
+
+`rule_based` against the best static baseline: **+13.3 points, z = 2.58, p = 0.010** —
+significant at 95 %.
 
 Each baseline fails for its own reason, which is what makes the suite informative:
-`local_light` never reaches the quality threshold; `remote_strong` scores highest of all
-(F1 0.923–0.950) and busts the communication budget every time; `local_strong` is genuinely
-competitive and loses only where the network is good enough that remote was worth spending
-on. The rule-based policy passes by using remote while bandwidth is high, then rationing.
+`local_light` almost never reaches the quality threshold; `remote_strong` scores well on
+quality and busts the communication budget **every single time**; `local_strong` is
+genuinely competitive and loses where the network was good enough that remote was worth
+spending on.
 
-**Calibration outcome: the 0.80 threshold stands.** It was an open question whether static
-policies passed too easily — on `EPISODE_001` alone, `always_local_strong` (0.865) clears it
-without adapting. Across the suite it does not, so no adjustment was made. Tuning the
-threshold against hand-written probes would have been fitting the benchmark to its own test.
+#### Why these are pooled, and why the earlier numbers were wrong
 
-Two caveats:
+An earlier revision of this document reported 0 % / 67 % / 0 % / 100 % from **three
+episodes**, and claimed adaptation beat every static baseline. That claim was not supported.
 
-- **`rule_based` at 100 % leaves no headroom.** With three episodes a competent heuristic can
-  sweep. A larger episode suite is needed before the metric can rank policies rather than
-  merely separate adaptive from static.
-- **Profile-blind runs collapse to 0 %.** Without a quality tier a policy genuinely cannot
-  tell configurations apart, so it falls back to catalog order. That is the honest cost of
-  hiding profiles, and the measured justification for disclosing an ordinal tier (§4.7).
+Over three episodes a success rate can only be 0, 1/3, 2/3 or 1, and 2/3 carries a 95 %
+interval of **[20.8 %, 93.9 %]** — seventy-three points wide. Meanwhile quality scores vary
+by roughly 0.05 between seeds while the margins deciding pass/fail are around 0.02. Three
+samples cannot resolve that.
+
+Pooled at the *old* 0.80 threshold the same comparison was 96.0 % against 92.0 %:
+**z = 1.46, p = 0.14, not significant**. The threshold was raised to 0.85 precisely because
+at 0.80 the strong local baseline sits near the ceiling and leaves no room to distinguish
+anything:
+
+| threshold | light | local_strong | remote | rule_based | difference | z | significant |
+|---:|---:|---:|---:|---:|---:|---:|---|
+| 0.80 | 8.0 % | 92.0 % | 0.0 % | 96.0 % | +4.0 | 1.46 | no |
+| 0.83 | 0.0 % | 74.0 % | 0.0 % | 90.0 % | +16.0 | 3.69 | yes |
+| **0.85** | **0.0 %** | **64.7 %** | **0.0 %** | **78.0 %** | **+13.3** | **2.58** | **yes** |
+| 0.87 | 0.0 % | 50.0 % | 0.0 % | 66.0 % | +16.0 | 2.85 | yes |
+| 0.90 | 0.0 % | 26.0 % | 0.0 % | 38.0 % | +12.0 | 2.25 | yes |
+
+0.85 keeps the effect significant while leaving `rule_based` at 78 % — headroom for a better
+policy to occupy, which 96 % would not have left.
+
+**Report Mission Success Rate with `--repeats`.** The default of one repeat runs the
+episodes as written and is right for reproducing a specific run; it is not enough to compare
+two policies. `aggregate.mission_success_ci_95` is emitted with every result, and the CLI
+warns when a suite is smaller than thirty runs.
+
+#### The one rate that is not a sampling artifact
+
+`always_remote_strong` measures exactly 0.0 % at n = 150, CI [0.0 %, 2.5 %]. That is
+**structural, not noise**. Communication volume is deterministic — 1.55 MB per processed
+frame — so the 400 MB budget is exceeded on every run, by 449 to 995 MB. Its quality is
+second-best of all the baselines. More episodes will never move it.
+
+That distinction matters when reading any 0 % in this benchmark: it may mean "too few
+samples to see a rare success", or it may mean "this cannot happen". Here the intervals
+separate the two.
 
 ### A fixture invariant this exposed
 
@@ -758,16 +955,22 @@ A result file carries `schema_version` like every other document:
   "schema_version": "1.0",
   "benchmark_version": "0.1.0.dev0",
   "policy": "rule_based",
-  "executor": "profile",
+  "executor_id": "profile",
+  "repeats": 1,
   "aggregate": { "episode_count": 3, "mission_success_rate": 1.0, "rates": {...}, "means": {...} },
-  "episodes": [ { "mission_success": true, "quality": {...}, "constraints": {...},
-                  "violations": {...}, "resources": {...}, "behaviour": {...},
-                  "record": {...} } ]
+  "episodes": [ { "mission_success": true, "executor_id": "profile", "quality": {...},
+                  "constraints": {...}, "violations": {...}, "resources": {...},
+                  "behaviour": {...}, "record": {...} } ]
 }
 ```
 
 Written with sorted keys, so re-running an unchanged benchmark produces a **byte-identical
 file** and a determinism regression shows up as a diff in review.
+
+`executor_id` records which backend produced the result — `profile`, `replay`, or an
+`unregistered:<ClassName>` for a programmatically injected one. It is read from the executor
+object rather than named alongside it, so it can never misreport the backend that ran; the
+suite-level `executor_id` is the sorted set of what actually ran across its episodes.
 
 **The step log and raw evidence are excluded by default.** Beyond size — a 900 s episode
 logs 900 steps and thousands of predicted instances — raw evidence carries
@@ -791,6 +994,31 @@ inside `develop/v1`. When a break is unavoidable: bump `schema_version`, update 
 update tests, document the change — and never silently reinterpret an old field.
 Migration support belongs in `aerointentbench/schemas/loading.py`; it is documented, not
 implemented, in V1.
+
+### 14.1 Frozen empirical schema registry
+
+Every externally consumed format below is at **`schema_version` `"1.0"`** and frozen for V1.
+All are loaded through `aerointentbench/schemas/loading.py`, which **rejects any version other
+than `"1.0"`** (`SchemaVersionError`) rather than reinterpreting it, validates fields strictly
+(unknown keys are errors), and serialises deterministically (sorted keys). The empirical
+execution modes are distinguished as: **synthetic profile** (`executor_id="profile"`, no
+`quality_evaluation` tag), **legacy scalar replay** (`executor_id="replay"`, no tag),
+**empirical mask replay** (`executor_id="replay"`, `quality_evaluation="empirical_mask_iou"`).
+
+| Schema | Version | Producer → Consumer | Hidden / private | Notes |
+|---|---|---|---|---|
+| Empirical mask **ground truth** (`frames[]` of masks) | 1.0 | dataset/bundle → evaluator | **whole file** (masks, track ids); never policy-visible | §4.15; discriminated from interval GT by the `frames` key |
+| Empirical **prediction** payload (inside a replay record) | 1.0 | model/bundle → evaluator | none — masks are prediction output, but must **not** carry `ground_truth_track_id` or a trusted `mask_iou` | §4.15 |
+| **Replay record set** (`data/predictions/*.json`) | 1.0 | recorder/bundle → `ReplayExecutor` | none | keyed by `episode_id`; at most one per episode |
+| Bundle-builder **source manifest** | 1.0 | researcher → `build_empirical_bundle` | none | the versioned envelope for its prediction JSONL / measurement CSV sources (those inherit its version) |
+| Bundle **provenance manifest** (`provenance.json`) | 1.0 | `build_empirical_bundle` → readers/validator | none | records `data_origin`, per-config `prediction_provenance` / `measurement_provenance`, SHA-256 of every generated file |
+| Pilot intermediate (GT JSON / prediction JSONL / measurement CSV) | 1.0 (GT & manifest) | pilot runner → bundle builder | GT hidden | JSONL/CSV are per-config streams under the manifest's version; `experiments/real_segmentation_pilot/` |
+
+**Compatibility guarantee for V1:** these field sets and their meanings are stable within
+`develop/v1`. `initial_config_id` and the new optional `fallback_config_id` on an episode are
+additive and backward-compatible (absent ⇒ prior behaviour). A future breaking change bumps
+the version and adds a migration in `loading.py`; an unsupported future version fails loudly
+today rather than being guessed at.
 
 ## 15. Explicit V1 assumptions
 
@@ -817,13 +1045,16 @@ version.
 |---|---|
 | **`initial_altitude_m` has no consumer** | The episode schema carries it and nothing reads it. In a realistic benchmark altitude would drive ground sample distance and therefore detection difficulty — 40 m and 100 m give very different mask sizes. Today it is decorative, and should either be wired into the synthetic prediction model or removed. |
 | **The quality score is quantised** | Twenty ground-truth targets means recall moves in steps of 0.05. Adequate for separating adaptive from static policies; too coarse to rank policies finely. More targets would smooth it. |
-| **`rule_based` sweeps the suite** | At 100 % Mission Success Rate over three episodes there is no headroom above the reference heuristic. A larger episode suite is needed before the primary metric can rank policies rather than merely separate them. |
+| **Three episodes are not a sample** | A success rate over the shipped suite can only be 0, 1/3, 2/3 or 1, and 2/3 carries a 95 % interval seventy-three points wide. `--repeats` pools seeds to narrow it, but the three episodes share one ground-truth stream, so they remain correlated. Additional streams would do more than more seeds. |
 | **The battery reserve does not discriminate** | Flight power dominates on-board compute by 15–60×, so no policy can move the final battery fraction much. It is a live observation and a guard, not a scoring axis (§11). |
 | **Adaptation latency is unimplemented** | "Appropriately adapted" is not formally defined, so no metric is computed. The data to compute one later is logged (§13). |
 | **Switching is free** | Zero latency and zero energy, all configurations assumed preloaded. Real model swapping costs both. |
 | **Packet loss is inert** | Recorded in the step log; no retransmission or corruption model. |
 | **One catalog per data root** | Selecting among several configuration catalogs is not specified. |
 | **`features_only` is untested end to end** | The rule is implemented and unit-tested, but no shipped episode exercises it, because no shipped configuration declares a feature payload. |
+| **Empirical masks are still synthetic** | §4.15 computes real IoU from real masks and matches one-to-one, but the masks it consumes are a hand-authored correctness example, not model output. No real segmentation model, dataset, or `frame × config` capture is included; `real_segmentation` remains a construction-time stub. Empirical replay is the seam such a capture plugs into. |
+| **No empirical track-level precision or F1** | Track-level precision and F1 need a prediction tied to a persistent predicted *track* across frames, and V1 empirical replay carries independent per-frame masks with no such identity. Rather than mix a track count with a detection count, empirical scoring reports `target_recall` (track-level) and `detection_precision` (detection-level) separately, and leaves `target_f1` `null` (§4.15). Persistent predicted-track association — a tracker over the predictions — would be needed to add them. |
+| **Greedy matching, not optimal** | Empirical matching is greedy by IoU, not the globally optimal assignment. The two disagree only under contrived overlaps at the per-frame instance counts V1 sees; adding an optimal matcher would mean an array dependency V1 forbids. |
 
 ## 17. Milestone
 

@@ -1,7 +1,7 @@
 {
   "schema_version": "1.0",
   "record_set_id": "SYNTHETIC_REPLAY_EXAMPLE",
-  "episode_id": "EPISODE_001",
+  "episode_id": "EPISODE_REPLAY_EXAMPLE",
   "records": [
     {
       "frame_id": 0,
@@ -9,7 +9,9 @@
       "success": true,
       "latency_ms": 100.0,
       "onboard_energy_j": 3.0,
-      "prediction": { "instances": [] }
+      "prediction": {
+        "instances": []
+      }
     },
     {
       "frame_id": 0,
@@ -21,7 +23,11 @@
       "download_mb": 0.05,
       "prediction": {
         "instances": [
-          { "prediction_id": "P0", "predicted_target_id": "T_A", "confidence": 0.91 }
+          {
+            "prediction_id": "P0",
+            "predicted_target_id": "T_A",
+            "confidence": 0.91
+          }
         ]
       }
     },
@@ -33,7 +39,11 @@
       "onboard_energy_j": 3.0,
       "prediction": {
         "instances": [
-          { "prediction_id": "P1", "predicted_target_id": "T_A", "confidence": 0.62 }
+          {
+            "prediction_id": "P1",
+            "predicted_target_id": "T_A",
+            "confidence": 0.62
+          }
         ]
       }
     },

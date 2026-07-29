@@ -11,7 +11,7 @@ is the whole story when comparing policies.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Final
 
 from aerointentbench.schemas.contract import Contract
@@ -48,7 +48,7 @@ class EpisodeMetrics:
     episode_id: str
     contract_id: str
     policy: str
-    executor: str
+    executor_id: str
 
     mission_success: bool
     quality: TaskEvaluationResult
@@ -90,7 +90,7 @@ class EpisodeMetrics:
             "episode_id": self.episode_id,
             "contract_id": self.contract_id,
             "policy": self.policy,
-            "executor": self.executor,
+            "executor_id": self.executor_id,
             "mission_success": self.mission_success,
             "quality": self.quality.to_dict(),
             "constraints": {
@@ -134,6 +134,11 @@ def compute_episode_metrics(
     contract: Contract,
 ) -> EpisodeMetrics:
     """Score one episode from its record and the task's verdict."""
+    # The task reports false positives per minute of examined footage; the mission wall-clock
+    # rate needs the completion time, which lives on the record, so it is added here. Guarded
+    # on the empirical detection count, so profile/legacy results are untouched.
+    evaluation = _with_mission_false_positive_rate(evaluation, record.final_time_s)
+
     deadline = _at_most(record.final_time_s, contract.deadline_s, name="deadline")
     battery = _at_least(record.final_battery_frac, contract.min_final_battery_frac, name="battery")
     communication = _at_most(
@@ -161,7 +166,7 @@ def compute_episode_metrics(
         episode_id=record.episode_id,
         contract_id=record.contract_id,
         policy=record.policy_name,
-        executor=record.executor_name,
+        executor_id=record.executor_id,
         mission_success=all(outcome.satisfied for outcome in outcomes),
         quality=evaluation,
         quality_success=quality.satisfied,
@@ -190,6 +195,30 @@ def compute_episode_metrics(
         processed_frames=getattr(record.evidence, "processed_frames", 0),
         step_count=record.step_count,
         frames_skipped_total=record.frames_skipped_total,
+    )
+
+
+_SECONDS_PER_MINUTE: Final = 60.0
+
+
+def _with_mission_false_positive_rate(
+    evaluation: TaskEvaluationResult, mission_time_s: float
+) -> TaskEvaluationResult:
+    """Add ``false_positives_per_mission_minute`` (wall-clock) to an empirical evaluation.
+
+    The numerator is the frame-level ``false_positive_detections`` the task reported; the
+    denominator is the mission's wall-clock completion time in minutes. A zero-duration mission
+    yields ``0.0`` rather than dividing by zero. Non-empirical evaluations (no detection count)
+    are returned untouched, so profile and legacy results do not gain the field.
+    """
+    false_positives = evaluation.details.get("false_positive_detections")
+    if false_positives is None:
+        return evaluation
+    minutes = mission_time_s / _SECONDS_PER_MINUTE
+    rate = false_positives / minutes if minutes > 0.0 else 0.0
+    return replace(
+        evaluation,
+        details={**evaluation.details, "false_positives_per_mission_minute": rate},
     )
 
 

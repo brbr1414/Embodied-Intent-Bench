@@ -34,7 +34,7 @@ def test_contract_fixture_loads(data_dir: Path) -> None:
     assert contract.task_id == "HUMAN_SEARCH_SEGMENTATION"
     assert contract.quality_metric == "target_f1"
     assert contract.quality_operator is ComparisonOperator.GREATER_EQUAL
-    assert contract.quality_threshold == 0.80
+    assert contract.quality_threshold == 0.85
     assert contract.deadline_s == 960.0
     assert contract.communication_budget_mb == 400.0
     assert contract.min_final_battery_frac == 0.20
@@ -43,9 +43,10 @@ def test_contract_fixture_loads(data_dir: Path) -> None:
 
 def test_contract_quality_satisfied_uses_its_own_operator(data_dir: Path) -> None:
     contract = load_contract(data_dir / "contracts" / "contract_001.json")
-    assert contract.quality_satisfied(0.84)
-    assert contract.quality_satisfied(0.80)
-    assert not contract.quality_satisfied(0.79)
+    threshold = contract.quality_threshold
+    assert contract.quality_satisfied(threshold + 0.04)
+    assert contract.quality_satisfied(threshold), "the boundary passes for >="
+    assert not contract.quality_satisfied(threshold - 0.01)
 
 
 def test_contract_is_frozen(data_dir: Path) -> None:

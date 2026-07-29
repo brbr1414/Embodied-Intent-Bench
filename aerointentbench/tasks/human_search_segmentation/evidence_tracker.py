@@ -28,8 +28,8 @@ from aerointentbench.executor.base import ExecutionResult
 from aerointentbench.schemas.runtime_state import EvidenceSummary
 from aerointentbench.tasks.human_search_segmentation.ground_truth import TASK_ID
 from aerointentbench.tasks.human_search_segmentation.prediction import (
+    EvidenceInstance,
     FramePrediction,
-    PredictedInstance,
 )
 
 __all__ = ["HumanSearchEvidenceRecord", "HumanSearchEvidenceTracker"]
@@ -37,10 +37,15 @@ __all__ = ["HumanSearchEvidenceRecord", "HumanSearchEvidenceTracker"]
 
 @dataclass(frozen=True, slots=True)
 class HumanSearchEvidenceRecord:
-    """The complete evidence one episode gathered. Evaluator input; never policy-visible."""
+    """The complete evidence one episode gathered. Evaluator input; never policy-visible.
+
+    ``instances`` are precomputed or empirical predictions, or a mix across a suite; both
+    kinds expose the same policy-visible fields, and the evaluator narrows to the concrete
+    kind the ground truth calls for.
+    """
 
     processed_frames: int
-    instances: tuple[PredictedInstance, ...]
+    instances: tuple[EvidenceInstance, ...]
 
     @property
     def task_id(self) -> str:
@@ -60,7 +65,7 @@ class HumanSearchEvidenceTracker:
     __slots__ = ("_confidence_total", "_instances", "_processed_frames")
 
     def __init__(self) -> None:
-        self._instances: list[PredictedInstance] = []
+        self._instances: list[EvidenceInstance] = []
         self._processed_frames = 0
         self._confidence_total = 0.0
 
@@ -74,13 +79,11 @@ class HumanSearchEvidenceTracker:
         if not result.success or result.prediction is None:
             return
 
-        prediction = result.prediction
-        if not isinstance(prediction, FramePrediction):
-            raise TypeError(
-                f"{type(self).__name__} expects a FramePrediction payload, "
-                f"got {type(prediction).__name__}. The executor's prediction source must "
-                f"match the task."
-            )
+        # Coerce rather than type-check: a live profile run passes a FramePrediction, a
+        # replay run passes the same payload after a JSON round-trip (a dict). Both are this
+        # task's payload, so reading both forms is this task's responsibility. A payload from
+        # a different task raises inside coerce().
+        prediction = FramePrediction.coerce(result.prediction)
 
         self._processed_frames += 1
         for instance in prediction.instances:

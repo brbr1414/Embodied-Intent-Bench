@@ -68,6 +68,9 @@ def remote_latency_s(
 class ProfileExecutor:
     """Synthesises execution results from profiled costs and the observed network."""
 
+    #: Provenance, equal to this backend's registry name.
+    executor_id: Final = "profile"
+
     __slots__ = ("_predictions", "_profiles", "_remote_timeout_s")
 
     def __init__(

@@ -24,7 +24,7 @@ import logging
 import sys
 from pathlib import Path
 
-from aerointentbench.benchmark import BenchmarkData, SuiteResult, run_suite
+from aerointentbench.benchmark import DEFAULT_EXECUTOR, BenchmarkData, SuiteResult, run_suite
 from aerointentbench.executor.registry import executor_registry
 from aerointentbench.policies.registry import policy_registry
 from aerointentbench.schemas.contract import load_contract
@@ -74,6 +74,47 @@ def build_parser() -> argparse.ArgumentParser:
         choices=policy_registry.names(),
         help="Policy to evaluate (default: %(default)s).",
     )
+    parser.add_argument(
+        "--executor",
+        default=DEFAULT_EXECUTOR,
+        choices=executor_registry.names(),
+        help=(
+            "Execution backend (default: %(default)s). "
+            "'profile' synthesises costs from a per-platform profile (all values synthetic); "
+            "'replay' serves precomputed frame x config records, the bridge to real "
+            "predictions; 'real_segmentation' is a V1 stub and fails immediately."
+        ),
+    )
+    parser.add_argument(
+        "--replay-strict",
+        action="store_true",
+        help=(
+            "With --executor replay, treat a missing record as an error rather than a "
+            "recorded failed inference."
+        ),
+    )
+    parser.add_argument(
+        "--fallback-config-id",
+        default=None,
+        metavar="CONFIG_ID",
+        help=(
+            "Safe fallback configuration for invalid policy actions, overriding the episode's "
+            "own fallback. Must be in the catalog and the episode's allowed pool. When omitted, "
+            "the fallback is resolved from the episode (fallback_config_id, then "
+            "initial_config_id, then the legacy CFG_LOCAL_LIGHT if present)."
+        ),
+    )
+    parser.add_argument(
+        "--repeats",
+        type=int,
+        default=1,
+        metavar="N",
+        help=(
+            "Run each episode under N seeds and pool the results (default: %(default)s). "
+            "Three episodes can only produce a success rate of 0, 1/3, 2/3 or 1; raise this "
+            "to get an interval narrow enough to compare policies."
+        ),
+    )
     parser.add_argument("--output", type=Path, help="Where to write the result JSON.")
     parser.add_argument(
         "--include-detail",
@@ -113,8 +154,17 @@ def main(argv: list[str] | None = None) -> int:
             episodes=episodes,
             contract=contract,
             policy_name=args.policy,
+            executor_name=args.executor,
             disclose_profiles=not args.hide_profiles,
+            replay_strict=args.replay_strict,
+            repeats=args.repeats,
+            fallback_config_id=args.fallback_config_id,
         )
+    except NotImplementedError as error:
+        # A selected-but-unbuilt backend (real_segmentation) fails at construction, before
+        # any episode runs. Report it as a clean usage error, not a traceback.
+        print(f"aerointentbench: {error}", file=sys.stderr)
+        return 2
     except SchemaValidationError as error:
         print(f"aerointentbench: {error}", file=sys.stderr)
         return 2
@@ -138,25 +188,46 @@ def main(argv: list[str] | None = None) -> int:
 
 def _print_summary(result: SuiteResult, *, output: Path | None) -> None:
     aggregate = result.aggregate
-    print(f"policy: {result.policy_name}   executor: {result.executor_name}")
-    print(
-        f"{'episode':<16}{'success':>9}{'quality':>9}{'MB':>9}{'batt':>8}{'time s':>9}{'switch':>8}"
-    )
-    for episode in result.episodes:
-        metrics = episode.metrics
+    print(f"policy: {result.policy_name}   executor: {result.executor_id}")
+    if result.repeats == 1:
         print(
-            f"{metrics.episode_id:<16}"
-            f"{'PASS' if metrics.mission_success else 'fail':>9}"
-            f"{metrics.quality_value:>9.3f}"
-            f"{metrics.total_communication_mb:>9.0f}"
-            f"{metrics.final_battery_fraction:>8.3f}"
-            f"{metrics.mission_completion_time_s:>9.0f}"
-            f"{metrics.configuration_switch_count:>8}"
+            f"{'episode':<16}{'success':>9}{'quality':>9}{'MB':>9}{'batt':>8}{'time s':>9}"
+            f"{'switch':>8}"
         )
+        for episode in result.episodes:
+            metrics = episode.metrics
+            print(
+                f"{metrics.episode_id:<16}"
+                f"{'PASS' if metrics.mission_success else 'fail':>9}"
+                f"{metrics.quality_value:>9.3f}"
+                f"{metrics.total_communication_mb:>9.0f}"
+                f"{metrics.final_battery_fraction:>8.3f}"
+                f"{metrics.mission_completion_time_s:>9.0f}"
+                f"{metrics.configuration_switch_count:>8}"
+            )
+    else:
+        # One line per episode would be `repeats` lines each; summarise per episode instead.
+        print(f"{'episode':<16}{'runs':>6}{'passed':>8}{'rate':>8}{'mean quality':>14}")
+        for episode_id in dict.fromkeys(e.metrics.episode_id for e in result.episodes):
+            runs = [e.metrics for e in result.episodes if e.metrics.episode_id == episode_id]
+            passed = sum(m.mission_success for m in runs)
+            mean_quality = sum(m.quality_value for m in runs) / len(runs)
+            print(
+                f"{episode_id:<16}{len(runs):>6}{passed:>8}"
+                f"{passed / len(runs):>8.0%}{mean_quality:>14.3f}"
+            )
+
+    low, high = aggregate.mission_success_ci
     print(
-        f"\nMission Success Rate: {aggregate.mission_success_rate:.0%} "
-        f"over {aggregate.episode_count} episode(s)"
+        f"\nMission Success Rate: {aggregate.mission_success_rate:.1%} "
+        f"({aggregate.mission_success_count}/{aggregate.episode_count})   "
+        f"95% CI [{low:.1%}, {high:.1%}]"
     )
+    if aggregate.episode_count < 30:
+        print(
+            "  note: that interval is wide. Use --repeats to pool more seeds before "
+            "comparing policies."
+        )
     print(
         f"  quality {aggregate.quality_success_rate:.0%}   "
         f"deadline {aggregate.deadline_success_rate:.0%}   "

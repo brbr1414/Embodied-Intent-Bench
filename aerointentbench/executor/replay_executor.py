@@ -26,7 +26,13 @@ from aerointentbench.executor.base import (
 )
 from aerointentbench.schemas.loading import DocumentReader, SchemaValidationError, open_document
 
-__all__ = ["ReplayExecutor", "ReplayRecord", "load_replay_records"]
+__all__ = [
+    "ReplayExecutor",
+    "ReplayRecord",
+    "ReplayRecordSet",
+    "load_replay_record_set",
+    "load_replay_records",
+]
 
 _MS_PER_S: Final = 1000.0
 _DOCUMENT_FIELDS: Final = ("record_set_id", "episode_id", "records")
@@ -62,13 +68,47 @@ class ReplayRecord:
         return (self.frame_id, self.config_id)
 
 
+@dataclass(frozen=True, slots=True)
+class ReplayRecordSet:
+    """One file's worth of precomputed outcomes, and the episode they were recorded from.
+
+    Keyed on the episode rather than the frame stream because a set captured synthetically
+    is tied to that episode's seed. A set captured from real model output would generalise
+    to the whole stream, but claiming that now would be claiming more than V1 can deliver.
+    """
+
+    episode_id: str
+    records: dict[tuple[int, str], ReplayRecord]
+    record_set_id: str = ""
+    source: Path | None = None
+
+    def __len__(self) -> int:
+        return len(self.records)
+
+    @property
+    def config_ids(self) -> frozenset[str]:
+        return frozenset(config_id for _, config_id in self.records)
+
+    @property
+    def frame_ids(self) -> tuple[int, ...]:
+        return tuple(sorted({frame_id for frame_id, _ in self.records}))
+
+
 class ReplayExecutor:
     """Serves precomputed records, keyed by frame and configuration."""
 
-    __slots__ = ("_records", "_strict")
+    #: Provenance, equal to this backend's registry name.
+    executor_id: Final = "replay"
+
+    __slots__ = ("_record_set_id", "_records", "_source", "_strict")
 
     def __init__(
-        self, records: Mapping[tuple[int, str], ReplayRecord], *, strict: bool = False
+        self,
+        records: Mapping[tuple[int, str], ReplayRecord],
+        *,
+        strict: bool = False,
+        record_set_id: str = "",
+        source: Path | None = None,
     ) -> None:
         """Args:
         records: Outcomes keyed by ``(frame_id, config_id)``.
@@ -77,9 +117,20 @@ class ReplayExecutor:
             long mission -- a slow configuration skips frames, so a policy can reach a
             frame nothing was precomputed for. Set it when a record set is meant to be
             exhaustive and a gap is a fixture bug.
+        record_set_id: Identifier of the source set, quoted in errors and gap reports so a
+            missing entry names the file it should have been in.
+        source: Path the set was loaded from, for the same reason.
         """
         self._records = dict(records)
         self._strict = strict
+        self._record_set_id = record_set_id
+        self._source = source
+
+    def _origin(self) -> str:
+        """Human-readable description of where these records came from."""
+        source = str(self._source) if self._source else ""
+        parts = [part for part in (self._record_set_id, source) if part]
+        return " from ".join(parts) if parts else "an unnamed record set"
 
     @property
     def frame_ids(self) -> tuple[int, ...]:
@@ -93,20 +144,25 @@ class ReplayExecutor:
         if record is None:
             if self._strict:
                 raise SchemaValidationError(
-                    f"replay record set has no entry for frame {request.frame_id} and "
-                    f"configuration {request.configuration.config_id!r}"
+                    f"replay gap: {self._origin()} has no entry for episode "
+                    f"{request.episode_id!r}, frame {request.frame_id}, configuration "
+                    f"{request.configuration.config_id!r}. Record the missing pairs, or run "
+                    f"with the profile executor."
                 )
             # Not an exception: a policy is allowed to reach a frame nobody precomputed.
             # It is recorded as a failed inference so the gap is visible in the metrics
-            # rather than silently scoring as a success with no evidence.
+            # rather than silently scoring as a success with no evidence -- and never by
+            # falling back to a different backend, which would mix two provenances in one run.
             return ExecutionResult(
                 success=False,
                 latency_s=0.0,
                 onboard_energy_j=0.0,
                 failure_reason=FailureReason.NO_PREDICTION_AVAILABLE,
                 metadata={
+                    "episode_id": request.episode_id,
                     "frame_id": request.frame_id,
                     "config_id": request.configuration.config_id,
+                    "record_set": self._origin(),
                 },
             )
 
@@ -122,8 +178,12 @@ class ReplayExecutor:
         )
 
 
-def load_replay_records(path: Path) -> dict[tuple[int, str], ReplayRecord]:
-    """Load and validate a replay record set."""
+def load_replay_record_set(path: Path) -> ReplayRecordSet:
+    """Load and validate a replay record set, including which episode it covers.
+
+    ``episode_id`` was previously declared in the schema and never read, which left nothing
+    able to decide *which* set belonged to an episode. It is now the resolution key.
+    """
     reader = open_document(path, document_type="ReplayRecordSet", allowed_fields=_DOCUMENT_FIELDS)
     records: dict[tuple[int, str], ReplayRecord] = {}
 
@@ -136,7 +196,20 @@ def load_replay_records(path: Path) -> dict[tuple[int, str], ReplayRecord]:
             )
         records[record.key] = record
 
-    return records
+    return ReplayRecordSet(
+        record_set_id=reader.get_optional_str("record_set_id") or "",
+        episode_id=reader.get_str("episode_id"),
+        records=records,
+        source=path,
+    )
+
+
+def load_replay_records(path: Path) -> dict[tuple[int, str], ReplayRecord]:
+    """Load only the records, discarding the set's identity.
+
+    Kept for callers that already hold the right file and need nothing else.
+    """
+    return load_replay_record_set(path).records
 
 
 def _read_record(reader: DocumentReader) -> ReplayRecord:
@@ -168,5 +241,11 @@ def _read_failure_reason(reader: DocumentReader) -> FailureReason:
 
 
 def make_replay_executor(path: Path, *, strict: bool = False) -> ReplayExecutor:
-    """Build a replay executor from a record-set file. Used by the executor registry."""
-    return ReplayExecutor(load_replay_records(path), strict=strict)
+    """Build a replay executor directly from a record-set file."""
+    record_set = load_replay_record_set(path)
+    return ReplayExecutor(
+        record_set.records,
+        strict=strict,
+        record_set_id=record_set.record_set_id,
+        source=record_set.source,
+    )

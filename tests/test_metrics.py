@@ -53,7 +53,7 @@ def _record(**overrides) -> EpisodeRecord:
         episode_id="EPISODE_001",
         contract_id="CONTRACT_001",
         policy_name="rule_based",
-        executor_name="profile",
+        executor_id="profile",
         steps=(_step(),),
         termination_reason=TerminationReason.PATH_COMPLETE,
         final_time_s=900.0,
@@ -341,3 +341,59 @@ def test_the_default_record_serialisation_withholds_the_answers() -> None:
     assert "mask_iou" not in default
     assert default.count("processed_frames") == 1, "the summary is still reported"
     assert "GT_SECRET" in detailed
+
+
+# --- uncertainty ------------------------------------------------------------------------
+
+
+def test_wilson_interval_brackets_the_estimate() -> None:
+    from aerointentbench.metrics.aggregate_metrics import wilson_interval
+
+    for successes, trials in ((0, 3), (2, 3), (3, 3), (138, 150), (144, 150)):
+        low, high = wilson_interval(successes, trials)
+        assert 0.0 <= low <= successes / trials <= high <= 1.0
+
+
+def test_the_interval_is_defined_at_the_boundaries() -> None:
+    """A policy that failed everything still has a real upper bound worth reporting."""
+    from aerointentbench.metrics.aggregate_metrics import wilson_interval
+
+    low, high = wilson_interval(0, 150)
+    assert low == 0.0
+    assert 0.0 < high < 0.05
+
+    low, high = wilson_interval(150, 150)
+    assert high == 1.0
+    assert 0.95 < low < 1.0
+
+
+def test_the_interval_narrows_with_the_sample() -> None:
+    """Three episodes cannot resolve what a hundred and fifty can."""
+    from aerointentbench.metrics.aggregate_metrics import wilson_interval
+
+    def width(successes: int, trials: int) -> float:
+        low, high = wilson_interval(successes, trials)
+        return high - low
+
+    assert width(2, 3) > 0.7, "two of three is almost no information"
+    assert width(100, 150) < 0.15
+
+
+def test_an_empty_suite_has_a_degenerate_interval() -> None:
+    from aerointentbench.metrics.aggregate_metrics import wilson_interval
+
+    assert wilson_interval(0, 0) == (0.0, 0.0)
+
+
+def test_aggregate_reports_the_count_and_the_interval(contract) -> None:
+    passing = _metrics(contract)
+    failing = _metrics(contract, cumulative_communication_mb=9999.0)
+
+    aggregate = aggregate_metrics([passing, passing, failing])
+
+    assert aggregate.mission_success_count == 2
+    assert aggregate.episode_count == 3
+    low, high = aggregate.mission_success_ci
+    assert low < aggregate.mission_success_rate < high
+    assert aggregate.to_dict()["mission_success_count"] == 2
+    assert aggregate.to_dict()["mission_success_ci_95"] == [low, high]

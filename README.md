@@ -22,8 +22,99 @@ control, or open-ended language understanding.
 → state and evidence updates → termination → metrics JSON. Runs on CPU with **zero runtime
 dependencies**; re-running produces a byte-identical result.
 
-454 tests, clean under `ruff check` and `ruff format`. Known limitations are recorded in
+592 tests, clean under `ruff check` and `ruff format`. Known limitations are recorded in
 [`docs/v1_spec.md`](docs/v1_spec.md) §16 rather than left implicit.
+
+**The V1 empirical infrastructure is complete, but no publication-quality real dataset/model
+pilot is included yet.** Four stages are integrated and frozen at `schema_version "1.0"`:
+empirical mask-IoU evaluation, unit-consistent metrics, the empirical bundle builder, and the
+real-segmentation pilot *tooling* (which has run no real model — see
+`experiments/real_segmentation_pilot/STATUS.md`). See [`docs/v1_spec.md`](docs/v1_spec.md)
+§14.1 for the frozen schema registry.
+
+## V2: the visual closed loop
+
+**V2** ([`docs/v2_design.md`](docs/v2_design.md)) inserts a real visual world between the
+mission state and the perception executor — the deliberate bridge between V1's abstract
+replay and a future physical (V3) simulator:
+
+```
+2D aerial world (GeoTIFF) → predefined UAV trajectory → position-dependent image crop
+→ configuration-selection policy (unchanged V1 interface) → image-based executor
+→ prediction + simulated latency → the UAV keeps moving; busy executors skip observations
+→ capture-time ground truth scores the prediction → mission-level V1 empirical metrics
+```
+
+The world is a large OpenAerialMap orthomosaic read **window by window** (never loaded
+whole, never sent whole to a model); targets are **synthetic rescue markers** composited at
+render time with exact semantic/instance ground truth; two lightweight executors
+(`fast_weak` / `slow_strong`) trade configured latency against segmentation quality, and the
+trade-off shows up in the mission: the strong model skips 2 of every 3 observations, the
+weak one sees everything and pays in false positives. Latency/energy are **simulated**;
+V2 validates architecture and closed-loop semantics, **not** real UAV perception
+performance.
+
+```bash
+pip install -e ".[dev,v2]"        # V2 extras: numpy, pillow, rasterio (V1 core stays zero-dep)
+python -m aerointentbench.v2.cli validate --scenario data/v2_scenarios/demo_img1_lawnmower.json
+python -m aerointentbench.v2.cli overview --scenario data/v2_scenarios/demo_img1_lawnmower.json --output results/v2
+python -m aerointentbench.v2.cli run --scenario data/v2_scenarios/demo_img1_lawnmower.json \
+  --policy always_strong --output results/v2 --debug-observations 3
+```
+
+The large rasters under `src/v2_img/` are local-only (gitignored); their provenance and the
+`img_1`/`img_2` mapping live in `data/v2_scenarios/aerial_sources.json`.
+
+### V2.1: real pretrained model-strategies
+
+`torch_semantic_segmentation` executors put **actual pretrained torchvision models** behind
+the same closed loop: `local_light_real` (`lraspp_mobilenet_v3_large`) and
+`local_strong_real` (`deeplabv3_resnet50`), official DEFAULT weights, person class resolved
+from weight metadata, real forward passes on the rendered RGB crop, and **measured**
+wall-clock latency optionally driving the mission clock (`latency_mode`). Heavy deps stay
+behind an extra and are lazily imported; the default test suite uses a fake backend and
+never downloads weights.
+
+```bash
+pip install -e ".[v2,v2-real-models]"      # + torch, torchvision (optional)
+python -m aerointentbench.v2.cli check-real-models \
+  --scenario data/v2_scenarios/demo_img1_real_models.json --load
+python -m aerointentbench.v2.cli run \
+  --scenario data/v2_scenarios/demo_img1_real_models.json \
+  --policy always_strong_real --output results/v2_real
+```
+
+**Honesty**: the scenario's targets are still synthetic rescue markers, which COCO/VOC
+person models have never seen — V2.1 results are *integration* results under deliberate
+domain mismatch, not real aerial-human perception performance. Energy remains simulated.
+Realistic aerial-person target assets are the next evaluation milestone.
+
+### V2.2: image-based human targets & controlled observability
+
+The target layer now supports **image assets**: an RGBA person cutout with verified
+provenance (license, redistribution permission, sha256) placed in world metres, composited
+with anti-aliased alpha while the **binary GT travels the exact same spatial transform**
+(never thresholded from RGB). A controlled observability experiment
+(`run-observability`) measures when the real models can see a target across size ×
+rotation × background, with per-condition pixel IoU/recall/FP and the evidence-rule
+verdict.
+
+```bash
+python -m aerointentbench.v2.cli validate-assets --manifest data/v2_assets/manifest.json
+python -m aerointentbench.v2.cli run-observability \
+  --config data/v2_scenarios/observability_img1.json --output results/v2_observability
+```
+
+**Current state**: the owner supplied **OpenAI-generated synthetic humans** (local-only;
+redistribution pending confirmation, so the PNGs are gitignored while the manifest and
+configs are committed). With them, the observability gate passed: DeepLabV3 detected
+**24/24** aerial conditions (IoU 0.82–0.96), LRASPP detected all large targets but none at
+≤32 projected px — a genuine light-vs-strong accuracy/size/latency trade-off, measured on
+real forward passes (~10 ms vs ~175 ms). A gated mission diagnostic
+(`demo_img1_generated_humans`) separates the strategies on precision (0.35 vs 0.67). All
+results are **synthetic generated human-target observability**, never real aerial-human
+perception performance. Earlier: a flat procedural silhouette was invisible to both models
+in all 18 conditions — superseded for shape-realistic synthetic targets.
 
 ## The loop
 
@@ -97,19 +188,179 @@ Mission Success Rate: 100% over 3 episode(s)
   quality 100%   deadline 100%   battery 100%   communication 100%   privacy 100%
 ```
 
-Useful flags: `--hide-profiles` withholds public configuration profiles from the policy;
+Useful flags: `--fallback-config-id CFG` sets the safe fallback for invalid policy actions
+(otherwise resolved from the episode, then the legacy `CFG_LOCAL_LIGHT` if present — a bundle
+need not contain it); `--hide-profiles` withholds public configuration profiles from the policy;
 `--include-detail` adds the step log and raw evidence (large, and it contains
 ground-truth-derived fields — do not publish a detailed result file).
 
+### Execution backends
+
+`--executor` selects how a chosen configuration is turned into a result. Profile is the
+default; existing commands are unaffected.
+
+| Backend | What it does | Numbers are |
+|---|---|---|
+| `profile` (default) | Synthesises latency, energy, and communication from a per-platform profile, plus the remote-latency network model. Quality comes from the synthetic prediction model | **synthetic** |
+| `replay` | Serves precomputed `frame × config` records from `data/predictions/`, resolved by the episode's ID. The intended bridge to real predictions; records may carry real prediction **masks** | replayed |
+| `real_segmentation` | V1 **stub**; selecting it fails immediately with a clear message | — |
+
+```bash
+# replay a recorded set (must declare this episode's episode_id under predictions/)
+python -m aerointentbench.run_benchmark \
+  --episode data/episodes/episode_001.json \
+  --contract data/contracts/contract_001.json \
+  --policy rule_based --executor replay \
+  --output results/episode_001_replay.json
+```
+
+A record set is captured from the profile executor with
+`python -m aerointentbench.tools.record_replay --episode … --output …`. The shipped
+`synthetic_replay_episode_001.json` was made this way; it keeps only the policy-visible
+prediction fields, so replay reproduces the profile run's **resources exactly** (latency,
+energy, communication) while quality scores as all-false-positive. Replay is the seam a
+real hardware capture would fill; the executor and loader do not change when it does.
+
+The executor that produced a result is recorded in the result JSON as `executor_id`, read
+from the executor object itself so it cannot disagree with what actually ran.
+
+### Empirical mask replay
+
+Profile mode generates quality synthetically: a per-tier probability decides whether a
+target is detected and a precomputed scalar stands in for mask overlap. **Empirical mask
+replay** removes the stand-in. Replay predictions carry actual instance **masks**, hidden
+ground truth carries per-frame **masks with track IDs**, and the evaluator computes mask IoU
+itself and matches predictions to targets **one-to-one** per frame.
+
+The distinction from profile is not the executor alone — it is the ground truth. A stream
+whose `ground_truth/` file declares per-frame `frames` of masks is scored by IoU; one
+declaring visibility `targets` is scored by the precomputed scalar. Predictions never carry a
+ground-truth track ID, IoU is computed from the masks and never read off the wire, and the
+policy sees none of it. A result scored this way is tagged `quality_evaluation:
+"empirical_mask_iou"` in its quality details, so a saved result distinguishes synthetic
+profile, legacy scalar replay, and empirical mask replay.
+
+**Two metric families, kept apart.** Empirical scoring reports two unit-consistent groups
+and never divides one into the other:
+
+| Metric | Unit | Definition |
+|---|---|---|
+| `target_recall` (canonical) | mission, **track-level** | unique GT tracks found / total valid tracks — deduplicated by hidden track ID |
+| `detection_precision` | frame, **detection-level** | matched predictions / non-ignored predictions |
+| `false_positive_detections` + `false_positives_per_processed_minute` (examined footage) and `false_positives_per_mission_minute` (wall-clock) | frame | the false-positive burden; each rate is named for its denominator |
+
+**Track-level precision and F1 are not reported.** They would need a prediction tied to a
+persistent predicted *track* across frames, and independent per-frame masks carry no such
+identity — a per-frame `prediction_id` is not a track. They are surfaced as `null` with a
+stated reason (`track_level_metrics_available: false`), never as a mixed-unit number. The
+canonical empirical mission-quality metric is therefore **`target_recall`**, and the example
+empirical contract uses it.
+
+A tiny, hand-verifiable example ships under `data/examples/empirical_replay/` — 8×8 frames
+with three tracked people, one exact match, one partial match above threshold, one
+below-threshold detection, one false positive, one missed target, and one ignore region. Run
+it through the normal CLI:
+
+```bash
+python -m aerointentbench.run_benchmark \
+  --data-root data/examples/empirical_replay \
+  --episode data/examples/empirical_replay/episodes/episode.json \
+  --contract data/examples/empirical_replay/contracts/contract.json \
+  --policy rule_based --executor replay \
+  --output results/empirical_example.json
+# quality metric target_recall = 0.667 (2 of 3 tracks found)
+# detection_precision 0.6 (3 of 5 detections matched), false_positive_detections 2,
+# false_positives_per_processed_minute 40.0, false_positives_per_mission_minute 30.0;
+# target_f1 = null (track-level, unavailable)
+```
+
+This branch adds no real model and no dataset: the masks are a **synthetic correctness
+example**, and `real_segmentation` remains a stub. Empirical replay is where recorded
+`frame × config` masks from a real capture would eventually plug in unchanged.
+
+### Building a bundle from real data
+
+You run any model **outside** the benchmark, write its outputs to files, and a builder
+converts them into a self-contained replay bundle the ordinary CLI runs unchanged. The
+builder executes no model and measures no hardware — it ingests, validates, and packages.
+
+Source formats (all stdlib, no image-decoding dependency):
+
+| Source | Format | Contains |
+|---|---|---|
+| Ground truth | JSON `{instances:[…]}` | per instance: `frame_id`, `track_id`, `category`, `mask` `{height,width,rows}`, optional `ignore` |
+| Predictions (per config) | JSON Lines | per line: `frame_id`, `prediction_id`, `category`, `confidence`, `mask` — **never** a GT track id or `mask_iou` |
+| Measurements (per config) | CSV | `frame_id, success, latency_s, compute_energy_j, upload_mb, download_mb, failure_reason` — latency/energy never inferred from a blank cell |
+
+A versioned **manifest** ties them together and declares the mission scaffolding and honest
+**provenance** (`data_origin`, per-config `prediction_provenance` / `measurement_provenance`)
+so a bundle can never label a hand-authored or estimated value as measured. **Coverage** is
+explicit: `strict` (default) requires a measurement for every declared `frame × config`;
+`sparse` turns a missing pair into an explicit failed record — never a silent omission.
+
+```bash
+# convert sources -> a validated, self-contained bundle
+python -m aerointentbench.tools.build_empirical_bundle \
+  --manifest data/examples/empirical_source/manifest.json \
+  --output data/generated/example_bundle --validate
+
+# validate an existing bundle independently
+python -m aerointentbench.tools.validate_empirical_bundle --bundle data/generated/example_bundle
+
+# then run it with the ordinary benchmark command — no custom flags
+python -m aerointentbench.run_benchmark \
+  --data-root data/generated/example_bundle \
+  --episode data/generated/example_bundle/episodes/episode.json \
+  --contract data/generated/example_bundle/contracts/contract.json \
+  --policy rule_based --executor replay --output results/example.json
+# -> target_recall 0.667, detection_precision 0.6 (built from the committed source fixture)
+```
+
+Builds are **deterministic**: records ordered by `(frame_id, config_id)`, JSON written
+sorted, and the only non-deterministic value — the build timestamp — isolated to one
+provenance field (`--created-at` pins it). Every generated file's SHA-256 is recorded in
+`provenance.json`. The committed source fixture under `data/examples/empirical_source/` is
+**synthetic and tests conversion correctness only** — no model, no dataset.
+
+### Real-segmentation pilot (tooling only — no real run yet)
+
+[`experiments/real_segmentation_pilot/`](experiments/real_segmentation_pilot/) is the bridge
+for running **real** segmentation models on a **real** aerial dataset and packaging their
+output through the bundle builder above — model execution stays outside the benchmark core,
+which keeps its zero-dependency, model-agnostic runtime. It provides a `DatasetAdapter` /
+`SegmentationModel` boundary, nearest-neighbour mask resizing onto the GT grid, a latency
+protocol (warm-up, monotonic clock, per-frame samples, mean/median/p95), and honest energy
+provenance (`measured` / `externally_supplied` / `estimated` — never a silent zero).
+
+**No real pilot has been run in this repository** — it has no dataset, no checkpoints, no
+model stack, and no GPU (see `experiments/real_segmentation_pilot/STATUS.md`). Nothing is
+fabricated: the tooling is verified end to end with a clearly-labelled **stub** model over a
+tiny in-memory dataset, and no bundle is committed. Supply a dataset, checkpoints, and a pilot
+environment (`requirements.txt`), and the same tooling runs the real pilot unchanged.
+
 ### Measured baselines
 
-| Policy | Mission Success Rate | Why it fails |
-|---|---:|---|
-| `always_local_light` | 0 % | never reaches the quality threshold |
-| `always_local_strong` | 67 % | competitive; loses where remote was worth spending on |
-| `always_remote_strong` | 0 % | highest quality of all, always over the communication budget |
-| `rule_based` | 100 % | uses remote while bandwidth is high, then rations |
-| `rule_based --hide-profiles` | 0 % | cannot tell configurations apart without a quality tier |
+Pooled over 50 seeds per episode (n = 150), because three episodes can only produce a
+success rate of 0, 1/3, 2/3 or 1 — an interval too wide to compare policies with:
+
+| Policy | Mission Success Rate | 95 % CI | Why it fails |
+|---|---:|---|---|
+| `always_local_light` | 0.7 % | [0.1, 3.7] | almost never reaches the quality threshold |
+| `always_local_strong` | 64.7 % | [56.7, 71.9] | competitive; loses where remote was worth spending on |
+| `always_remote_strong` | **0.0 %** | [0.0, 2.5] | second-best quality, over the communication budget **every run** |
+| `rule_based` | **78.0 %** | [70.7, 83.9] | uses remote while bandwidth is high, then rations |
+| `rule_based --hide-profiles` | 0.7 % | [0.1, 3.7] | cannot tell configurations apart without a quality tier |
+
+`rule_based` beats the best static baseline by **+13.3 points (z = 2.58, p = 0.010)**.
+`always_remote_strong`'s zero is structural rather than a small-sample artifact: its
+communication volume is deterministic and exceeds the budget on every run.
+
+Reproduce with:
+
+```bash
+python -m aerointentbench.run_benchmark --suite \
+  --contract data/contracts/contract_001.json --policy rule_based --repeats 50
+```
 
 ## Repository layout
 
@@ -125,6 +376,7 @@ aerointentbench/
 
 data/            benchmark specifications and fixtures (all synthetic)
 docs/            specification, architecture, branching
+experiments/     real-model tooling OUTSIDE the core (real_segmentation_pilot)
 tests/           pytest suite
 ```
 

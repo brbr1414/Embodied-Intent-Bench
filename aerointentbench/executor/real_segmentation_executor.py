@@ -33,9 +33,17 @@ How this would be implemented
 
 from __future__ import annotations
 
+from typing import Final
+
 from aerointentbench.executor.base import ExecutionRequest, ExecutionResult
 
-__all__ = ["RealSegmentationExecutor"]
+__all__ = ["NOT_IMPLEMENTED_MESSAGE", "RealSegmentationExecutor"]
+
+
+#: Raised on construction and on execute, so the two paths cannot drift apart.
+NOT_IMPLEMENTED_MESSAGE: Final = (
+    "RealSegmentationExecutor is not implemented in V1. Use profile or replay."
+)
 
 
 class RealSegmentationExecutor:
@@ -45,14 +53,19 @@ class RealSegmentationExecutor:
     if selected. It does not return a failed ``ExecutionResult``: a missing backend is a
     configuration error to fix, not a mission condition to measure, and quietly reporting
     "inference failed" for every frame would look like a benchmark result.
+
+    **Construction raises**, so selecting this backend fails before step 0 rather than after
+    a mission's worth of work. Waiting until the first ``execute`` would spend nine hundred
+    steps of accounting to reach a conclusion available immediately.
     """
 
+    #: Provenance, equal to this backend's registry name.
+    executor_id: Final = "real_segmentation"
+
     def __init__(self, **kwargs: object) -> None:
-        self._kwargs = kwargs
+        del kwargs
+        raise NotImplementedError(NOT_IMPLEMENTED_MESSAGE)
 
     def execute(self, request: ExecutionRequest) -> ExecutionResult:
-        raise NotImplementedError(
-            "RealSegmentationExecutor is a V1 interface stub and runs no model. "
-            "Use the 'profile' executor for simulated costs, or the 'replay' executor for "
-            "precomputed predictions. See this module's docstring for the implementation plan."
-        )
+        del request
+        raise NotImplementedError(NOT_IMPLEMENTED_MESSAGE)  # pragma: no cover - unreachable

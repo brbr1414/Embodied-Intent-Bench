@@ -13,13 +13,14 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Iterable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Final
 
 from aerointentbench import SCHEMA_VERSION, __version__
 from aerointentbench.executor.base import Executor
-from aerointentbench.executor.profile_executor import ProfileExecutor
+from aerointentbench.executor.registry import ExecutorContext, build_executor
+from aerointentbench.executor.replay_executor import ReplayRecordSet, load_replay_record_set
 from aerointentbench.metrics.aggregate_metrics import AggregateMetrics, aggregate_metrics
 from aerointentbench.metrics.episode_metrics import EpisodeMetrics, compute_episode_metrics
 from aerointentbench.policies.base import Policy
@@ -39,8 +40,9 @@ from aerointentbench.schemas.profile import (
 )
 from aerointentbench.schemas.task_spec import TaskSpec, check_contract_is_supported, load_task_spec
 from aerointentbench.simulator.action_validator import (
-    DEFAULT_SAFE_FALLBACK_CONFIG_ID,
+    LEGACY_FALLBACK_CONFIG_ID,
     ActionValidator,
+    fallback_rejection_reason,
 )
 from aerointentbench.simulator.battery_model import BatteryModel, SimpleBatteryModel
 from aerointentbench.simulator.episode_runner import EpisodeRunner
@@ -50,7 +52,19 @@ from aerointentbench.simulator.records import EpisodeRecord
 from aerointentbench.simulator.state_manager import StateManager
 from aerointentbench.tasks.registry import resolve_task
 
-__all__ = ["BenchmarkData", "EpisodeResult", "SuiteResult", "run_episode", "run_suite"]
+__all__ = [
+    "DEFAULT_EXECUTOR",
+    "BenchmarkData",
+    "EpisodeResult",
+    "SuiteResult",
+    "resolve_fallback_config_id",
+    "run_episode",
+    "run_suite",
+]
+
+#: The executor used when none is named. Profile-driven simulation: no GPU, no weights,
+#: exactly reproducible, and every number it reports synthetic.
+DEFAULT_EXECUTOR: Final = "profile"
 
 _LOGGER: Final = logging.getLogger(__name__)
 
@@ -63,14 +77,32 @@ class EpisodeResult:
     metrics: EpisodeMetrics
 
 
+#: Seeds for repeat r of an episode are ``episode.seed + r * SEED_STRIDE``. The stride keeps
+#: two episodes from colliding onto the same seed -- and therefore onto identical synthetic
+#: predictions -- as long as their declared seeds differ by less than it. Repeat 0 leaves the
+#: seed untouched, so a single-repeat suite is exactly the episode as written.
+SEED_STRIDE: Final = 10_000
+
+
 @dataclass(frozen=True, slots=True)
 class SuiteResult:
     """A policy's results over a set of episodes."""
 
     policy_name: str
-    executor_name: str
+    #: Provenance of the backend that produced these episodes, read from the episode
+    #: records rather than named independently. If a suite somehow mixed backends this is
+    #: the sorted set of what actually ran, so it can never quietly claim one when another
+    #: was used.
+    executor_id: str
     episodes: tuple[EpisodeResult, ...]
     aggregate: AggregateMetrics
+    #: How many seeds each episode was run under. See :func:`run_suite`.
+    repeats: int = 1
+
+    @staticmethod
+    def _executor_id_from(episodes: tuple[EpisodeResult, ...]) -> str:
+        ids = sorted({result.record.executor_id for result in episodes})
+        return "+".join(ids) if ids else ""
 
     def to_dict(self, *, include_detail: bool = False) -> dict[str, Any]:
         """Serialise to the V1 result-file shape.
@@ -83,7 +115,8 @@ class SuiteResult:
             "schema_version": SCHEMA_VERSION,
             "benchmark_version": __version__,
             "policy": self.policy_name,
-            "executor": self.executor_name,
+            "executor_id": self.executor_id,
+            "repeats": self.repeats,
             "aggregate": self.aggregate.to_dict(),
             "episodes": [
                 {
@@ -104,6 +137,7 @@ class BenchmarkData:
         "_paths",
         "_platforms",
         "_profiles",
+        "_replay_sets",
         "_root",
         "_task_specs",
         "_traces",
@@ -131,6 +165,16 @@ class BenchmarkData:
             spec.task_id: spec for spec in _load_all(root / "task_specs", load_task_spec)
         }
         self._ground_truth_dir = root / "ground_truth"
+        self._replay_sets: dict[str, ReplayRecordSet] = {}
+        for record_set in _load_all(root / "predictions", load_replay_record_set):
+            if record_set.episode_id in self._replay_sets:
+                # Two sets claiming one episode would make replay provenance depend on
+                # filesystem order -- exactly the ambiguity this branch exists to remove.
+                raise SchemaValidationError(
+                    f"two replay record sets declare episode_id {record_set.episode_id!r}; "
+                    "each episode may have at most one replay set under predictions/"
+                )
+            self._replay_sets[record_set.episode_id] = record_set
 
     @property
     def root(self) -> Path:
@@ -159,11 +203,79 @@ class BenchmarkData:
     def task_spec(self, task_id: str) -> TaskSpec:
         return _lookup(self._task_specs, task_id, "task specification")
 
+    def replay_record_set(self, episode_id: str) -> ReplayRecordSet | None:
+        """Return the replay records recorded from ``episode_id``, if any were.
+
+        ``None`` rather than an error: an episode without a record set is only a problem
+        when the replay executor is actually selected, and that is where the error belongs
+        -- with the instruction for how to record one.
+        """
+        return self._replay_sets.get(episode_id)
+
     def episodes(self) -> tuple[Episode, ...]:
         return tuple(_load_all(self._root / "episodes", load_episode))
 
     def contracts(self) -> tuple[Contract, ...]:
         return tuple(_load_all(self._root / "contracts", load_contract))
+
+
+def resolve_fallback_config_id(
+    *,
+    episode: Episode,
+    catalog: ConfigCatalog,
+    privacy_level,
+    explicit: str | None = None,
+) -> str:
+    """Resolve the safe fallback configuration for an episode, by explicit precedence.
+
+    A misbehaving policy's invalid action is replaced by this configuration when there is no
+    current one to keep, so it must be resolved and validated *before* the episode starts, and
+    it must not silently assume any particular configuration name exists. Precedence:
+
+    1. ``explicit`` (e.g. a ``--fallback-config-id`` CLI override), if supplied.
+    2. The episode's ``fallback_config_id``, if supplied.
+    3. The episode's ``initial_config_id``, if it is a usable configuration.
+    4. The legacy ``CFG_LOCAL_LIGHT``, only if it exists and is usable (backward compatibility).
+    5. Otherwise fail, requiring an explicit fallback.
+
+    A fallback *supplied* at (1) or (2) but unusable is an error, not a reason to fall through:
+    a named-but-broken fallback is a misconfiguration worth surfacing. Steps (3) and (4) are
+    best-effort and fall through when their candidate is not usable. "Usable" means present in
+    the catalog, in the episode's allowed pool, and permitted by the privacy level -- never an
+    arbitrary "first configuration in the catalog".
+    """
+
+    def reject(config_id: str) -> str | None:
+        return fallback_rejection_reason(
+            config_id,
+            catalog=catalog,
+            allowed_config_ids=episode.allowed_config_ids,
+            privacy_level=privacy_level,
+        )
+
+    for source, candidate in (
+        ("--fallback-config-id override", explicit),
+        (f"episode {episode.episode_id!r} fallback_config_id", episode.fallback_config_id),
+    ):
+        if candidate is not None:
+            problem = reject(candidate)
+            if problem is not None:
+                raise SchemaValidationError(
+                    f"{source} {candidate!r} is unusable as a fallback: {problem}"
+                )
+            return candidate
+
+    for candidate in (episode.initial_config_id, LEGACY_FALLBACK_CONFIG_ID):
+        if candidate is not None and reject(candidate) is None:
+            return candidate
+
+    raise SchemaValidationError(
+        f"episode {episode.episode_id!r} has no usable safe fallback configuration. Its "
+        f"allowed pool is {list(episode.allowed_config_ids)} and the legacy default "
+        f"{LEGACY_FALLBACK_CONFIG_ID!r} is not available. Pass --fallback-config-id, or set the "
+        "episode's fallback_config_id (or a usable initial_config_id) to a configuration that "
+        "is in the catalog, in the allowed pool, and permitted by the privacy level."
+    )
 
 
 def run_episode(
@@ -173,12 +285,13 @@ def run_episode(
     contract: Contract,
     policy_name: str = "rule_based",
     policy: Policy | None = None,
+    executor_name: str = DEFAULT_EXECUTOR,
     executor: Executor | None = None,
-    executor_name: str = "profile",
+    replay_strict: bool = False,
     battery_model: BatteryModel | None = None,
     network_model: NetworkModel | None = None,
     disclose_profiles: bool = True,
-    fallback_config_id: str = DEFAULT_SAFE_FALLBACK_CONFIG_ID,
+    fallback_config_id: str | None = None,
 ) -> EpisodeResult:
     """Assemble the components for one episode, run it, and score the result.
 
@@ -187,7 +300,16 @@ def run_episode(
             explicit benchmark-mode setting, not something a policy can arrange for itself.
         policy: A constructed policy, overriding ``policy_name``. Lets an external policy be
             evaluated without registering it.
-        executor: A constructed executor, overriding the default profile-driven one.
+        executor_name: Which registered backend to build. See ``executor_registry``.
+        executor: An already-constructed backend, overriding ``executor_name``. Its
+            provenance is read from the object's ``executor_id``, never from
+            ``executor_name`` -- an unregistered backend is recorded as
+            ``"unregistered:<ClassName>"`` rather than mislabelled as a registered one.
+        replay_strict: Whether a missing replay record raises instead of being recorded as
+            a failed inference.
+        fallback_config_id: An explicit safe-fallback override. When ``None`` the fallback is
+            resolved from the episode by :func:`resolve_fallback_config_id`; when given it takes
+            precedence and must itself be a usable configuration.
         battery_model: Overrides ``SimpleBatteryModel``. The seam a recorded-discharge or
             electrochemical model plugs into.
         network_model: Overrides the trace-based model. The seam an external simulator
@@ -204,6 +326,15 @@ def run_episode(
     )
     check_catalog_is_profiled(
         profiles, config_ids=episode.allowed_config_ids, platform_id=episode.platform_id
+    )
+    # Resolve the safe fallback up front, by explicit precedence, so a data root with its own
+    # configuration names is not obliged to contain the legacy CFG_LOCAL_LIGHT. Fails here,
+    # before any step runs, if nothing usable can be resolved.
+    resolved_fallback = resolve_fallback_config_id(
+        episode=episode,
+        catalog=data.catalog,
+        privacy_level=contract.privacy_level,
+        explicit=fallback_config_id,
     )
 
     task = resolve_task(task_spec)
@@ -222,8 +353,15 @@ def run_episode(
     resolved_executor = (
         executor
         if executor is not None
-        else ProfileExecutor(
-            profiles, predictions=task.create_prediction_source(ground_truth, profiles)
+        else build_executor(
+            executor_name,
+            ExecutorContext(
+                episode_id=episode.episode_id,
+                profiles=profiles,
+                prediction_source=task.create_prediction_source(ground_truth, profiles),
+                replay_record_set=data.replay_record_set(episode.episode_id),
+                replay_strict=replay_strict,
+            ),
         )
     )
 
@@ -251,10 +389,9 @@ def run_episode(
             catalog=data.catalog,
             allowed_config_ids=episode.allowed_config_ids,
             privacy_level=contract.privacy_level,
-            fallback_config_id=fallback_config_id,
+            fallback_config_id=resolved_fallback,
         ),
         policy_name=policy_name,
-        executor_name=executor_name,
     )
 
     record = runner.run()
@@ -271,25 +408,61 @@ def run_suite(
     contract: Contract,
     policy_name: str = "rule_based",
     policy: Policy | None = None,
+    executor_name: str = DEFAULT_EXECUTOR,
     disclose_profiles: bool = True,
+    replay_strict: bool = False,
+    repeats: int = 1,
+    fallback_config_id: str | None = None,
 ) -> SuiteResult:
-    """Run every episode against one contract and aggregate the results."""
+    """Run every episode against one contract and aggregate the results.
+
+    Args:
+        repeats: How many seeds to run each episode under. The default of 1 runs the
+            episodes exactly as written.
+
+    Why repeats exist
+    -----------------
+    Mission Success Rate over three episodes can only be 0, 1/3, 2/3 or 1, and the shipped
+    quality scores vary by roughly 0.05 between seeds while the margins that decide
+    pass/fail are around 0.02. Three episodes therefore cannot resolve the difference
+    between two policies: the baselines measure 67 % and 100 % over three episodes and 92 %
+    and 96 % over 150, and the second pair is not a significant difference at all.
+
+    Repeats resample the *scene* -- the seed drives synthetic prediction generation -- while
+    holding the path, platform, network trace, and targets fixed. That is genuine additional
+    sampling, but it is not the same as adding independent episodes: the shipped episodes
+    already share one ground-truth stream, so this narrows the interval without removing
+    that correlation.
+
+    A policy instance is reused across repeats when one is passed directly, so a stateful
+    policy sees the whole grid. Pass a fresh instance per suite if that matters.
+    """
+    if repeats < 1:
+        raise ValueError(f"repeats must be at least 1, got {repeats}")
+
     results = tuple(
         run_episode(
             data=data,
-            episode=episode,
+            episode=episode
+            if repeat == 0
+            else replace(episode, seed=episode.seed + repeat * SEED_STRIDE),
             contract=contract,
             policy_name=policy_name,
             policy=policy,
+            executor_name=executor_name,
             disclose_profiles=disclose_profiles,
+            replay_strict=replay_strict,
+            fallback_config_id=fallback_config_id,
         )
         for episode in episodes
+        for repeat in range(repeats)
     )
     return SuiteResult(
         policy_name=policy_name,
-        executor_name="profile",
+        executor_id=SuiteResult._executor_id_from(results),
         episodes=results,
         aggregate=aggregate_metrics([result.metrics for result in results]),
+        repeats=repeats,
     )
 
 
