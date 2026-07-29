@@ -416,7 +416,95 @@ three policies live under `results/v2_hard/replay_<policy>/` (local-only, compos
 human frames are never committed). As everywhere in V2.2: **synthetic generated
 human-target observability — never real aerial-human perception performance.**
 
-## 11. Next steps
+## 10.6 V2.4 — multi-seed hard-scenario evaluation
+
+**Question.** Is "adaptive beats static" a reproducible pattern across controlled
+variations, or one hand-designed episode? (`scenario_family.py`, `multi_seed_eval.py`)
+
+**Method.** A deterministic scenario family derives variants of
+`demo_img1_hard_tradeoff` as a pure function of `(FAMILY_VERSION, base id, seed)` —
+sampled: small-target slots/jitter/size/pose/rotation/lateral offset on the early
+lanes, late-target jitter/size/pose/rotation/lateral offset on the {41,43,45,47} s
+post-switch slots, battery capacity in [6.60, 7.00] Wh. NOT sampled: executors,
+contract, trajectory, camera, world. Every sampled value is recorded in
+`provenance.scenario_family`; a sampling change bumps `FAMILY_VERSION`. All policies
+run the **same** scenario instances (paired by construction); per-run records restate
+the evaluator's outputs; success rates use the V1 Wilson interval.
+
+**Family 1.0 lesson (kept as sensitivity evidence).** The first sampling scheme let
+late targets appear from ~37 s — before the adaptive policy's battery-pressure switch
+(~40-43 s) — and its ±0.2 s jitter let wide targets clip the edge of a
+strong-cadence frame. A 5-seed smoke run collapsed to 4/5 all-fail: **the adaptive
+advantage is sensitive to the alignment between late-target onset and the switch
+time.** Family 1.1 realigns the late window with the documented hard-scenario
+structure (≥ 41 s, ±0.1 s jitter); the 1.0 finding is part of the result, not a
+discarded draft.
+
+**Results — family 1.1, seeds 0-29, 90 paired runs** (local, torchvision official
+weights, configured latency → outcomes deterministic; `results/v2_hard_multiseed/`):
+
+| policy | success | rate | Wilson 95% CI | dominant failures |
+|---|---|---|---|---|
+| `always_light_real` | 0/30 | 0.000 | [0.000, 0.114] | quality 100% |
+| `always_strong_real` | 0/30 | 0.000 | [0.000, 0.114] | battery 100%, quality 97% |
+| `rule_based` | **19/30** | **0.633** | **[0.455, 0.781]** | quality 30%, battery 17% |
+
+Mechanism (mean per-class detection rate): small targets — light 0.05, strong 1.00,
+rule 1.00; late targets — light 0.77, strong 0.09, rule 0.45. The complementarity is
+exactly the designed trade-off, and rule's 0.45 late rate (vs light's 0.77) is the
+honest price of switching late. Paired outcomes: **19 seeds only-adaptive-succeeds,
+11 all-fail, 0 seeds where any static succeeds, 0 counterexamples** where adaptive
+loses to a static. Rule's 11 failures: 9 quality (missed late targets before/at the
+switch), 5 battery (margin −0.006 min), 3 both.
+
+**Fragility flags (raised by explicit rules, not narrative):** (1) 6/19 adaptive
+successes clear the battery floor by <0.01 — the family is knife-edged on battery by
+design, but a small energy perturbation flips those missions; (2) every adaptive
+success uses exactly **one** strong→light switch — the result demonstrates the value
+of a single battery-pressure adaptation, not of rich adaptive behaviour.
+
+**Supported claims (this family only):** on 30 paired seeds, the adaptive policy
+succeeds significantly more often than either static policy (non-overlapping Wilson
+CIs); no static policy ever satisfied the contract; no counterexample seeds exist.
+**Not supported / not evaluated:** generalisation beyond this family (other worlds,
+contracts, trajectories, network dynamics); anything about real aerial-human
+perception; robustness of policies richer than one switch; publication-grade sample
+size (30 seeds is development-grade; the command scales to 100+ at ~13 s/run).
+
+Reproduce:
+
+```bash
+python -m aerointentbench.v2.multi_seed_eval --seeds 0:29 \
+  --output results/v2_hard_multiseed          # ~20 min on Apple Silicon (mps)
+```
+
+## 11. V2 freeze
+
+V2 closes with V2.4. Freeze checklist (all verified at freeze preparation):
+
+- [x] full default test suite passes without torch/local assets (opt-in markers
+      `real_models` / `real_assets` stay deselected)
+- [x] `ruff check` and `ruff format --check` clean
+- [x] deterministic scenario generation (same seed → identical bytes; pinned by test)
+- [x] repeatable experiment command with resume (`multi_seed_eval`, chunk-safe)
+- [x] strict output serialisation everywhere (`allow_nan=False`; wall-clock excluded
+      from experiment records)
+- [x] no GT leakage into policy-visible state (pinned by tests at every layer)
+- [x] replay-viewer bundles compatible (family variants export unchanged)
+- [x] documentation: scope, methodology, statistics, limitations, licensing,
+      privacy status (NOT_APPLICABLE + pre-remote TODO), supported vs unsupported
+      claims (this section and §10.1-10.6)
+- [x] restricted assets untracked (human PNGs, rasters, generated frames all
+      gitignored; redistribution PENDING OWNER CONFIRMATION)
+- [x] clean working tree at the freeze commit; no push, no merge without owner
+      authorisation
+
+Claim-status vocabulary for anything citing V2: **demonstrated in one scenario**
+(§10.5 reference episode) / **supported across evaluated seeds** (§10.6, 30 seeds) /
+**not yet evaluated** (other families, network dynamics, richer policies) / **out of
+scope for V2** (remote execution, learned policies, physics, real-human data).
+
+## 12. Next steps (V3 and beyond — out of V2 scope)
 
 Toward real models: implement a heavy `ImageExecutor` kind in an optional module
 (e.g. MobileSAM), measure real wall-clock as *its own labelled quantity*, and feed

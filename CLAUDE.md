@@ -178,6 +178,19 @@ fixtures, never person-performance evidence; `evaluation_purpose`
 (`controlled_observability` / `integration_diagnostic`) results must never be presented
 as aerial-human perception. The V2.0 `procedural_marker` mode stays untouched.
 
+**V2.4 multi-seed evaluation** (`aerointentbench/v2/scenario_family.py`,
+`multi_seed_eval.py`, `docs/v2_design.md` §10.6): the hard scenario generalises to a
+deterministic family — every variant is a pure function of (family version, base id,
+seed), all sampled values recorded in `provenance.scenario_family`, strict JSON, no
+wall-clock in identity. Rules: a sampling change is a FAMILY_VERSION bump; every policy
+runs the same scenario instances (paired by construction); per-run records restate the
+evaluator's outputs (never a second success computation) and exclude measured
+wall-clock; Wilson CIs via the V1 helper; counterexample seeds are preserved and
+surfaced, never hidden; the family must not be re-tuned to force adaptive wins (family
+1.0's honest failure is documented as sensitivity evidence). Generator + statistics are
+CI-safe (no torch/assets); batch execution is local-only via
+`python -m aerointentbench.v2.multi_seed_eval`.
+
 **V2.3 replay viewer** (`aerointentbench/v2/replay_export.py`, `replay_viewer.py`,
 `docs/v2_design.md` §10.4): `export-replay` runs one mission (runtime snapshots on) and
 writes a self-contained bundle (`manifest.json` + `events.json` + re-rendered frames +
