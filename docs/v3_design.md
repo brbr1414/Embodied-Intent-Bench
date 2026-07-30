@@ -317,8 +317,72 @@ real UAV, radio, model-serving, or aerial-human-perception performance. The batt
 knife-edge is deliberate (the family probes it); seeds where the adaptive policy fails
 are preserved, listed, and counted against the claim.
 
+## P3 — policy skyline: the offline upper bound and a projecting baseline
+
+**Research question.** How much of the mission's achievable outcome do the current
+policies actually capture — is the benchmark's headroom large enough to discriminate
+between better policies, and does a more sophisticated baseline automatically win?
+
+### The GT-aware skyline (`aerointentbench/v2/skyline.py`)
+
+`compute_skyline(scenario)` computes the best outcome **any** configuration sequence
+could achieve, by forward dynamic programming over the deterministic closed loop:
+per-slot detection outcomes for every legal configuration come from the mission's own
+renderer/executors/evaluator (never a parallel implementation), and states are pruned
+by Pareto dominance on the three monotone resources (mission clock, energy,
+communication). The search space is **legal** sequences only — privacy-forbidden
+configurations are excluded, and branches that exceed the communication budget are
+cut, because an optimum that violates a hard constraint bounds nothing.
+
+The skyline **deliberately reads ground truth** (which configuration detects what, at
+which capture, before choosing). Every output carries ``gt_aware: true`` and a label
+stating it is an upper bound, not a policy; presenting a skyline number as a policy
+result is a defect. Tests pin soundness (no policy run may beat it), determinism,
+privacy/budget compliance, and that its chosen sequence, replayed through
+`MissionRunner` as a schedule, reproduces its claimed recall exactly.
+
+### The budget-planner baseline (`aerointentbench/policies/budget_planner.py`)
+
+`budget_planner` is a V1-interface policy between the reactive `rule_based` and the
+skyline: it paces the communication budget against a pro-rata schedule (bounded burst
+ahead), and projects the final battery from an EMA drain rate estimated from its own
+observed battery fractions — projections, not instantaneous thresholds. It sees only
+the contract, the frozen `RuntimeState`, and public profiles; it is deliberately
+stateful within one episode (documented; the composition root builds policies per
+run).
+
+### Results on the P2 remote-hard bases (real models, local-only)
+
+| quantity | img_1 base | img_2 base |
+|---|---|---|
+| skyline best recall | **1.000** (contract satisfiable) | **1.000** (contract satisfiable) |
+| skyline strategy | light almost everywhere; remote x2 on the good link at small-target slots; strong x2 exactly at late-target odd slots | same shape |
+| rule_based (P2) | success, recall 0.750 | success, recall 0.750 |
+| budget_planner | **FAIL**, recall 0.500 | **FAIL**, recall 0.500 |
+
+Two findings, both kept honestly:
+
+1. **The headroom is large.** Perfect knowledge achieves recall 1.0 using only four
+   non-light calls, placed exactly where targets appear. The gap between the skyline
+   (1.0) and the best honest policy (0.75 on the bases; 55%/32% success over the
+   families) is the benchmark's discriminative range — there is real room for
+   smarter policies, and the skyline makes that gap measurable per scenario.
+2. **Sophistication does not automatically win.** The budget planner *fails* where
+   the reactive rules succeed: its projection-driven duty-cycling alternates strong
+   and light almost every step, which halves the strong cadence and misses the
+   odd-slot late targets the family is built around; rule_based's cruder
+   battery-pressure rule happens to hold strong *contiguously* through the late
+   window. Over family seeds 0–9 the planner succeeds 1/10 (img_1) and 2/10 (img_2)
+   vs rule_based's 5/10 and 4/10 on the same instances — yet on two img_2 seeds the
+   planner succeeds where rule_based fails, so neither dominates seed-wise. This is
+   not a reason to tune the planner against this family — it is evidence the
+   benchmark separates adaptation *strategies*, not just adaptive vs static.
+
+Artifacts: `results/v3_skyline/` (local-only). The skyline is exact only for
+`target_recall` contracts (the found-set is the DP state; other metrics are not
+set-representable) — enforced with a loud error.
+
 ## Later V3 milestones (not implemented)
 
-P3 policy skyline (GT-aware offline upper bound + budget planner);
 P4 real-data grounding through the V1 empirical bundle pipeline;
 reference deployment (real Jetson client + inference service behind these interfaces).

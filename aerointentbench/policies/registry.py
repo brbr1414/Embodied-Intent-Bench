@@ -11,6 +11,7 @@ different catalog registers its own baselines without touching this module.
 from __future__ import annotations
 
 from aerointentbench.policies.base import Policy, policy_registry
+from aerointentbench.policies.budget_planner import BudgetPlannerPolicy
 from aerointentbench.policies.rule_based import RuleBasedPolicy
 from aerointentbench.policies.static import StaticPolicy
 
@@ -31,6 +32,11 @@ policy_registry.register("always_remote_strong", _always("CFG_REMOTE_STRONG"))
 #: Takes ``public_profiles`` and optionally ``settings``; both are keyword arguments so the
 #: composition root decides whether this run discloses profiles.
 policy_registry.register("rule_based", RuleBasedPolicy)
+
+#: The projecting baseline (V3 P3): paces the communication budget and projects the
+#: final battery from its own observations. Stateful within one episode; the
+#: composition root constructs policies per run.
+policy_registry.register("budget_planner", BudgetPlannerPolicy)
 
 #: Available for a catalog whose configuration IDs differ from the shipped fixtures.
 policy_registry.register("static", StaticPolicy)

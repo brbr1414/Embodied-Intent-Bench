@@ -202,6 +202,23 @@ keep their outcomes (pinned). Protocol models are wire-representable
 (`protocol_version "1.0"`). No real server/RPC/Jetson in this milestone; nothing here
 is a hardware claim.
 
+**V3 P3 policy skyline** (`aerointentbench/v2/skyline.py`,
+`aerointentbench/policies/budget_planner.py`, `docs/v3_design.md` §P3): the skyline
+is a GT-AWARE offline upper bound (forward DP over the closed loop, per-slot outcomes
+from the mission's own renderer/executors/evaluator, Pareto pruning on
+clock/energy/communication, legal actions only — privacy-forbidden configs excluded,
+budget-exceeding branches cut). Every output is labelled `gt_aware: true` + "not a
+policy"; NEVER present a skyline number as a policy/baseline result. target_recall
+contracts only (loud error otherwise); soundness/determinism/replay-consistency
+pinned by tests. `budget_planner` is a registered V1 policy (pro-rata comm pacing
+with bounded burst + EMA battery-drain projection from its own observations;
+stateful within one episode — composition root builds per run). Result on both P2
+bases: skyline recall 1.0 (satisfiable; light + 2 remote + 2 perfectly-timed strong)
+vs rule_based 0.75 vs budget_planner FAIL 0.5 — the planner's duty-cycling halves
+the strong cadence and misses odd-slot lates. Both findings kept honestly: large
+measurable headroom AND sophistication-does-not-auto-win; do not tune the planner
+against the family. Artifacts `results/v3_skyline/` (local-only).
+
 **V3 P2 statistical hardening** (`docs/v3_design.md` §P2): two remote-aware hard bases
 (`demo_img1_remote_hard.json` / `demo_img2_remote_hard.json`) put all five constraint
 axes in play — the intended 4-way pattern (light→quality, strong→battery,
