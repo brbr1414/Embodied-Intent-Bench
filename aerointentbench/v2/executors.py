@@ -55,6 +55,9 @@ class ImageExecutionResult:
     energy_j: float
     communication_mb: float
     measurement_provenance: dict[str, str]
+    #: Radio energy for transmitting/receiving this call's payloads (V3 P1). Zero for
+    #: local executors, so their result shape and existing accounting are unchanged.
+    communication_energy_j: float = 0.0
     #: Backend-specific provenance (V2.1 real models record framework, weights, device,
     #: dtype, per-call latencies, etc. here). ``None`` for the V2.0 heuristic executors,
     #: so their result shape is unchanged.
@@ -75,6 +78,7 @@ class ImageExecutionResult:
             "measured_wall_clock_s": round(self.measured_wall_clock_s, 6),
             "energy_j": self.energy_j,
             "communication_mb": self.communication_mb,
+            "communication_energy_j": self.communication_energy_j,
             "measurement_provenance": dict(self.measurement_provenance),
         }
 
@@ -183,10 +187,18 @@ def build_executors(specs: tuple[ExecutorConfigSpec, ...]) -> dict[str, ImageExe
         kinds["torch_semantic_segmentation"] = TorchSemanticSegmentationExecutor
     registry: dict[str, ImageExecutor] = {}
     for spec in specs:
+        if spec.kind == "simulated_remote":
+            continue  # remotes are wired second, so they can reference local fallbacks
         try:
             registry[spec.config_id] = kinds[spec.kind](spec)
         except KeyError:  # pragma: no cover - schema already validates kinds
             raise SchemaValidationError(f"unknown executor kind {spec.kind!r}") from None
+    remote_specs = [spec for spec in specs if spec.kind == "simulated_remote"]
+    if remote_specs:
+        from aerointentbench.v2.remote import build_remote_executor
+
+        for spec in remote_specs:
+            registry[spec.config_id] = build_remote_executor(spec, registry)
     return registry
 
 

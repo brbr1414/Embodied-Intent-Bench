@@ -29,6 +29,10 @@ from aerointentbench.v2.trajectory import build_trajectory
 
 REPO = Path(__file__).resolve().parents[1]
 BASE = REPO / "data" / "v2_scenarios" / "demo_img1_hard_tradeoff.json"
+REMOTE_BASES = (
+    REPO / "data" / "v2_scenarios" / "demo_img1_remote_hard.json",
+    REPO / "data" / "v2_scenarios" / "demo_img2_remote_hard.json",
+)
 
 
 @pytest.fixture(scope="module")
@@ -101,8 +105,10 @@ def test_sampled_values_are_recorded_and_bounded(tmp_path: Path, base_scenario) 
         assert family["family_version"] == FAMILY_VERSION
         assert family["seed"] == seed
         assert family["base_scenario_id"] == base_scenario.scenario_id
-        assert 6.60 <= family["battery_capacity_wh"] <= 7.00
+        base_wh = base_scenario.drone.battery_capacity_wh
+        assert base_wh * 0.97 - 1e-3 <= family["battery_capacity_wh"] <= base_wh * 1.03 + 1e-3
         assert payload["drone"]["battery_capacity_wh"] == family["battery_capacity_wh"]
+        assert "network_regimes" not in family  # this base declares no network_trace
 
         sampled = family["targets"]
         assert len(sampled) == 8
@@ -138,6 +144,70 @@ def test_target_positions_match_the_trajectory(tmp_path: Path, base_scenario) ->
         assert stored[0] == pytest.approx(on_path[0], abs=2e-3)
         assert stored[1] == pytest.approx(on_path[1] + target["lateral_offset_m"], abs=2e-3)
         assert region[0] <= stored[0] <= region[2] and region[1] <= stored[1] <= region[3]
+
+
+# --- remote-aware bases (V3 P2, family 2.0) --------------------------------------------------
+
+
+@pytest.mark.parametrize("base_path", REMOTE_BASES, ids=lambda p: p.stem)
+def test_remote_base_variants_sample_the_network(tmp_path: Path, base_path: Path) -> None:
+    base = load_scenario(base_path)
+    base_trace = {r.regime_id: r for r in base.simulation.network_trace}
+    for seed in (0, 4):
+        path = write_variant(base_path, seed, tmp_path / f"{base_path.stem}_{seed}.json")
+        payload = json.loads(path.read_text())
+        family = payload["provenance"]["scenario_family"]
+        sampled = payload["simulation"]["network_trace"]
+        assert family["network_regimes"] == sampled  # provenance restates the trace
+
+        # Structure is base identity: names, order, loss, reachability classes.
+        assert [r["regime_id"] for r in sampled] == list(base_trace)
+        assert sampled[0]["start_s"] == 0.0
+        starts = [r["start_s"] for r in sampled]
+        assert starts == sorted(starts)
+        for regime in sampled:
+            reference = base_trace[regime["regime_id"]]
+            assert regime["packet_loss_frac"] == reference.packet_loss_frac
+            if reference.uplink_mbps == 0.0:
+                assert regime["uplink_mbps"] == regime["downlink_mbps"] == 0.0
+            else:
+                assert 0.75 * reference.uplink_mbps - 0.1 <= regime["uplink_mbps"]
+                assert regime["uplink_mbps"] <= 1.3 * reference.uplink_mbps + 0.1
+                assert 0.85 * reference.rtt_ms - 0.1 <= regime["rtt_ms"]
+                assert regime["rtt_ms"] <= 1.25 * reference.rtt_ms + 0.1
+            if regime["regime_id"] != sampled[0]["regime_id"]:
+                assert abs(regime["start_s"] - reference.start_s) <= 2.0 + 1e-9
+
+        # Everything the family must NOT touch: executors, contract, camera, trajectory.
+        scenario = load_scenario(path)
+        assert scenario.config_ids == base.config_ids
+        assert scenario.contract == base.contract
+        assert scenario.trajectory == base.trajectory
+        assert scenario.camera == base.camera
+
+
+def test_remote_base_late_heights_anchor_to_the_base(tmp_path: Path) -> None:
+    """img_2 lates sample around that base's own operating point, not img_1's."""
+    img2 = REMOTE_BASES[1]
+    base = load_scenario(img2)
+    anchors = {}
+    for obj in base.targets:
+        if obj.object_id.startswith("TGT_E"):
+            anchors.setdefault(obj.asset_id, obj.height_m)
+    payload = json.loads(write_variant(img2, 2, tmp_path / "v.json").read_text())
+    by_asset: dict[str, list[float]] = {}
+    for obj in payload["objects"]:
+        if obj["object_id"].startswith("TGT_E"):
+            by_asset.setdefault(obj["asset_id"], []).append(obj["height_m"])
+    for asset_id, heights in by_asset.items():
+        for height in heights:
+            assert anchors[asset_id] * 0.93 - 1e-3 <= height <= anchors[asset_id] * 1.07 + 1e-3
+
+
+def test_same_seed_same_bytes_on_a_remote_base(tmp_path: Path) -> None:
+    a = write_variant(REMOTE_BASES[0], 5, tmp_path / "a.json")
+    b = write_variant(REMOTE_BASES[0], 5, tmp_path / "b.json")
+    assert a.read_bytes() == b.read_bytes()
 
 
 # --- statistics functions on synthetic records -----------------------------------------------
@@ -228,15 +298,30 @@ def test_aggregate_counts_and_wilson_interval() -> None:
 def test_paired_comparison_patterns_and_counterexamples() -> None:
     paired = paired_comparison(paired_records())
     patterns = {name: entry["seeds"] for name, entry in paired["patterns"].items()}
-    assert patterns["adaptive_succeeds_both_static_fail"] == [0, 4]
+    assert patterns["adaptive_succeeds_all_static_fail"] == [0, 4]
+    assert patterns[f"adaptive_succeeds_{LIGHT}_fails"] == [0, 4]
     assert patterns["all_succeed"] == [1]
     assert patterns["all_fail"] == [2]
     assert patterns["adaptive_fails_any_static_succeeds"] == [3]
     counter = paired["counterexamples"]
-    assert counter["adaptive_underperforms_light"] == [3]
-    assert counter["adaptive_underperforms_strong"] == []
+    assert counter[f"adaptive_underperforms_{LIGHT}"] == [3]
+    assert counter[f"adaptive_underperforms_{STRONG}"] == []
     assert sorted(counter["pattern_differs_from_reference"]) == [1, 2, 3]
     assert paired["paired_seed_count"] == 5
+
+
+def test_paired_comparison_generalises_to_three_statics() -> None:
+    """The remote-aware policy set (V3 P2) adds a third static baseline."""
+    remote = "always_remote_strong"
+    rows = paired_records()
+    for seed, success in ((0, False), (1, True), (2, False), (3, False), (4, False)):
+        rows.append(make_record(seed, remote, success))
+    paired = paired_comparison(rows, static_policies=(LIGHT, STRONG, remote))
+    patterns = {name: entry["seeds"] for name, entry in paired["patterns"].items()}
+    assert patterns["adaptive_succeeds_all_static_fail"] == [0, 4]
+    assert patterns[f"adaptive_succeeds_{remote}_fails"] == [0, 4]
+    assert paired["counterexamples"][f"adaptive_underperforms_{remote}"] == []
+    assert sorted(paired["counterexamples"]["pattern_differs_from_reference"]) == [1, 2, 3]
 
 
 def test_fragility_flags_thin_battery_margins() -> None:
@@ -284,6 +369,9 @@ def test_run_record_restates_the_mission_result() -> None:
             "battery_constraint_success": True,
             "communication_constraint_success": True,
         },
+        cumulative_communication_mb=24.6,
+        communication_energy_j=1446.6,
+        network_behaviour={"remote_attempts": 12, "remote_successes": 12},
         termination_reason="path_complete",
         quality={
             "target_recall": 0.25,
@@ -304,12 +392,15 @@ def test_run_record_restates_the_mission_result() -> None:
     scenario = SimpleNamespace(
         targets=[SimpleNamespace(object_id=f"TGT_S{i}_X_SMALL") for i in range(1, 5)]
         + [SimpleNamespace(object_id=f"TGT_E{i}_X_LATE") for i in range(1, 5)],
-        contract=SimpleNamespace(min_final_battery_frac=0.22),
+        contract=SimpleNamespace(min_final_battery_frac=0.22, communication_budget_mb=26.0),
     )
     record = run_record(result, scenario, seed=1)
     assert record["compute_energy_j"] == pytest.approx(610.0)
     assert record["flight_energy_j"] == pytest.approx(5390.0)
-    assert record["communication_energy_j"] is None
+    assert record["communication_mb"] == pytest.approx(24.6)
+    assert record["communication_margin_mb"] == pytest.approx(1.4)
+    assert record["communication_energy_j"] == pytest.approx(1446.6)
+    assert record["network_behaviour"]["remote_attempts"] == 12
     assert record["battery_margin_frac"] == pytest.approx(0.03)
     assert record["config_switch_count"] == 1
     assert record["config_history_rle"] == [["local_strong_real", 1], ["local_light_real", 1]]

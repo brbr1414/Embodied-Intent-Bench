@@ -30,11 +30,10 @@ NOT_APPLICABLE / UNKNOWN per hard constraint, using the mission's existing seman
 plus simple, explicit at-risk margins. The final event's statuses are derived from the
 evaluator's own constraint booleans — the viewer never runs a second success evaluator.
 
-Privacy is reported ``NOT_APPLICABLE``: V2 has no remote configuration or remote
-executor, so no executable path can violate the privacy constraint.
-TODO: align V1 and V2 privacy semantics (including a privacy branch in the V2
-mission-success conjunction) before any remote executor or remote configuration is
-introduced.
+Privacy (V3 P1): the fifth constraint is active and aligned with V1. It is reported
+``NOT_APPLICABLE`` only for scenarios that declare no remote execution path (nothing
+can violate it there); scenarios with a ``simulated_remote`` configuration report
+SAFE/VIOLATED from the mission's own privacy-violation record.
 """
 
 from __future__ import annotations
@@ -89,10 +88,14 @@ _GT_TARGET_RGBA: Final = (0, 220, 60, 170)
 _GT_DISTRACTOR_RGBA: Final = (250, 210, 0, 170)
 
 _PRIVACY_NOTE: Final = (
-    "V2 declares no remote configuration or remote executor, so no executable path can "
-    "violate the privacy constraint. Align V1/V2 privacy semantics before introducing "
-    "remote execution."
+    "this scenario declares no remote execution path, so no action can violate the "
+    "privacy constraint (V3 P1 activates it for scenarios with simulated_remote configs)"
 )
+
+
+def _privacy_applicable(scenario: V2Scenario) -> bool:
+    """Privacy is exercised only where a remote execution path exists to violate it."""
+    return any(spec.kind == "simulated_remote" for spec in scenario.executor_configs)
 
 
 # --- constraint status (replay-time presentation over the existing semantics) ----------------
@@ -140,7 +143,9 @@ def overall_status(statuses: dict[str, str]) -> str:
     return STATUS_SAFE
 
 
-def _final_constraint_status(result: V2MissionResult) -> dict[str, Any]:
+def _final_constraint_status(
+    result: V2MissionResult, *, privacy_applicable: bool
+) -> dict[str, Any]:
     """The final statuses, derived from the evaluator's own constraint booleans."""
     mapping = {
         "quality": result.constraints["quality_success"],
@@ -151,7 +156,16 @@ def _final_constraint_status(result: V2MissionResult) -> dict[str, Any]:
     statuses = {
         name: (STATUS_SAFE if satisfied else STATUS_VIOLATED) for name, satisfied in mapping.items()
     }
-    statuses["privacy"] = STATUS_NOT_APPLICABLE
+    if privacy_applicable:
+        statuses["privacy"] = (
+            STATUS_SAFE
+            if result.constraints.get("privacy_constraint_success", True)
+            else STATUS_VIOLATED
+        )
+    else:
+        # No remote execution path exists in this scenario, so no action can violate
+        # privacy -- the constraint is not exercised, not merely satisfied.
+        statuses["privacy"] = STATUS_NOT_APPLICABLE
     statuses["overall"] = STATUS_SAFE if result.mission_success else STATUS_VIOLATED
     return statuses
 
@@ -213,7 +227,9 @@ def export_replay_bundle(scenario_path: Path, policy_name: str, output_dir: Path
         "final": {
             "mission_success": result.mission_success,
             "constraints": dict(result.constraints),
-            "constraint_status": _final_constraint_status(result),
+            "constraint_status": _final_constraint_status(
+                result, privacy_applicable=_privacy_applicable(scenario)
+            ),
             "termination_reason": result.termination_reason,
             "final_time_s": result.final_time_s,
             "final_battery_frac": result.final_battery_frac,
@@ -268,6 +284,12 @@ def _build_event(
         # tallies; recomputed as a running ratio for display only.
     }.get(contract.quality_metric)
 
+    privacy_applicable = _privacy_applicable(scenario)
+    violations_so_far = int(runtime.get("privacy_violations_so_far", 0))
+    if not privacy_applicable:
+        privacy = STATUS_NOT_APPLICABLE
+    else:
+        privacy = STATUS_VIOLATED if violations_so_far > 0 else STATUS_SAFE
     statuses = {
         "quality": quality_status(contract, interim_value),
         "deadline": deadline_status(after["remaining_deadline_s"], contract.deadline_s),
@@ -275,7 +297,7 @@ def _build_event(
         "communication": communication_status(
             after["cumulative_communication_mb"], contract.communication_budget_mb
         ),
-        "privacy": STATUS_NOT_APPLICABLE,
+        "privacy": privacy,
     }
     statuses["overall"] = overall_status(statuses)
 
@@ -305,7 +327,12 @@ def _build_event(
             "budget_mb": contract.communication_budget_mb,
             "remaining_mb": contract.communication_budget_mb - after["cumulative_communication_mb"],
         },
-        "privacy": {"status": STATUS_NOT_APPLICABLE, "reason": _PRIVACY_NOTE},
+        "privacy": {
+            "status": statuses["privacy"],
+            "privacy_level": contract.privacy_level.value,
+            "violations_so_far": violations_so_far,
+            "reason": "" if privacy_applicable else _PRIVACY_NOTE,
+        },
         "overall": {"status": statuses["overall"]},
     }
 
@@ -385,7 +412,14 @@ def _write_frames(
     import numpy as np
 
     observation = runner.render_at(log.capture_time_s, log.observation_id)
-    prediction = runner.executor_for(log.executed_config_id).run(observation.rgb)
+    executor = runner.executor_for(log.executed_config_id)
+    if hasattr(executor, "run_with_context"):
+        prediction = executor.run_with_context(
+            observation.rgb,
+            runner.execution_context_at(log.capture_time_s, log.observation_id),
+        )
+    else:
+        prediction = executor.run(observation.rgb)
 
     h, w = observation.rgb.shape[:2]
     pred_overlay = np.zeros((h, w, 4), dtype=np.uint8)

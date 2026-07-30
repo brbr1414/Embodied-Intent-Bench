@@ -506,9 +506,24 @@ scope for V2** (remote execution, learned policies, physics, real-human data).
 
 ## 12. Next steps (V3 and beyond — out of V2 scope)
 
+**Roadmap (owner decision, 2026-07-29): V3 = benchmark completion; the 3D simulator
+moves to V4.** V3 closes the gaps V2.4's own fragility analysis exposed, in order:
+
+1. **Activate the dormant contract axes** — a remote executor kind, dynamic network
+   (reuse V1's `TraceBasedNetworkModel`), and V1/V2 privacy alignment (the documented
+   pre-remote TODO, including a privacy branch in V2 mission success). This makes
+   communication and privacy real constraints and wakes the rule-based policy's
+   dormant reachability/affordability/latency-budget rules.
+2. **Statistical hardening** — 100-seed main evaluation, a second world (`img_2`),
+   wider family dimensions; retire the "every success is one switch" flag.
+3. **Policy skyline** — an offline-optimal (GT-aware upper bound, clearly labelled)
+   and a simple budget-planning policy, so `rule_based` has context above it.
+4. **Real-data grounding** — one real aerial-person dataset through the completed V1
+   empirical bundle pipeline (external dependency: dataset licensing).
+
 Toward real models: implement a heavy `ImageExecutor` kind in an optional module
 (e.g. MobileSAM), measure real wall-clock as *its own labelled quantity*, and feed
 per-config measurements through the existing V1 empirical bundle builder for
-reproducible replay. Toward V3: replace `WorldSource`/`Trajectory`/`CameraRenderer`
+reproducible replay. Toward **V4**: replace `WorldSource`/`Trajectory`/`CameraRenderer`
 with a 3D simulator adapter (AirSim / Isaac / Gazebo) behind the same interfaces; the
 runner, policy interface, and evaluation are designed to survive that swap.

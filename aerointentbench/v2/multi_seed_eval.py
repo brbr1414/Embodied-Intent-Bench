@@ -59,13 +59,29 @@ __all__ = [
 
 EXPERIMENT_SCHEMA_VERSION: Final = "1.0"
 DEFAULT_POLICIES: Final = ("always_light_real", "always_strong_real", "rule_based")
-#: The reference hard scenario's outcome pattern (light, strong, adaptive) — seeds that
-#: deviate from it are the interesting ones and are listed, never hidden.
-_REFERENCE_PATTERN: Final = (False, False, True)
+#: The default policy set for bases that declare a ``simulated_remote`` executor
+#: (V3 P2): the remote static baseline is part of the designed 4-way outcome pattern.
+REMOTE_DEFAULT_POLICIES: Final = (
+    "always_light_real",
+    "always_strong_real",
+    "always_remote_strong",
+    "rule_based",
+)
 _FRAGILE_BATTERY_MARGIN: Final = 0.01
 
 
 # --- per-run records (restating the evaluator's outputs) -------------------------------------
+
+
+def _privacy_status(result: Any, scenario: Any) -> str:
+    """Privacy standing for a run: NOT_APPLICABLE where no remote path exists (V3 P1)."""
+    has_remote = any(
+        spec.kind == "simulated_remote" for spec in getattr(scenario, "executor_configs", ())
+    )
+    if not has_remote:
+        return "NOT_APPLICABLE"
+    satisfied = result.constraints.get("privacy_constraint_success", True)
+    return "satisfied" if satisfied else "violated"
 
 
 def run_record(result: Any, scenario: Any, seed: int) -> dict[str, Any]:
@@ -95,7 +111,7 @@ def run_record(result: Any, scenario: Any, seed: int) -> dict[str, Any]:
         "policy": result.policy_name,
         "mission_success": result.mission_success,
         "constraints": dict(result.constraints),
-        "privacy_status": "NOT_APPLICABLE",
+        "privacy_status": _privacy_status(result, scenario),
         "termination_reason": result.termination_reason,
         "target_recall": quality["target_recall"],
         "detection_precision": quality["detection_precision"],
@@ -113,9 +129,14 @@ def run_record(result: Any, scenario: Any, seed: int) -> dict[str, Any]:
         "total_energy_j": result.cumulative_energy_j,
         "compute_energy_j": compute_energy,
         "flight_energy_j": result.cumulative_energy_j - compute_energy,
-        # V2 has no remote path and models no per-bit radio energy; kept explicit so a
-        # reader never mistakes absence for zero measurement.
-        "communication_energy_j": None,
+        "communication_mb": result.cumulative_communication_mb,
+        "communication_margin_mb": (
+            scenario.contract.communication_budget_mb - result.cumulative_communication_mb
+        ),
+        # Simulated radio energy (V3 P1); 0.0 for local-only missions, where no radio
+        # is modelled and nothing can be spent.
+        "communication_energy_j": result.communication_energy_j,
+        "network_behaviour": dict(result.network_behaviour),
         "mean_executor_latency_s": result.mean_executor_latency_s,
         "processed_observations": result.processed_observation_count,
         "skipped_observations": result.skipped_observation_count,
@@ -136,12 +157,18 @@ _AGGREGATED_METRICS: Final = (
     "battery_margin_frac",
     "total_energy_j",
     "compute_energy_j",
+    "communication_mb",
+    "communication_margin_mb",
+    "communication_energy_j",
     "skipped_observations",
     "config_switch_count",
 )
 
 
-def _metric_summary(values: list[float]) -> dict[str, Any]:
+def _metric_summary(values: list[float]) -> dict[str, Any] | None:
+    """Summary statistics, or ``None`` when no record carries the metric."""
+    if not values:
+        return None
     return {
         "n": len(values),
         "mean": statistics.fmean(values),
@@ -177,6 +204,12 @@ def aggregate_records(records: list[dict[str, Any]]) -> dict[str, Any]:
                     1 for r in rows if not r["constraints"]["communication_constraint_success"]
                 )
                 / n,
+                # V2 records predating the remote path carry no privacy key; absence
+                # means the constraint could not fail, not that it was unmeasured.
+                "privacy": sum(
+                    1 for r in rows if not r["constraints"].get("privacy_constraint_success", True)
+                )
+                / n,
             },
             "small_target_detection_rate": statistics.fmean(
                 r["small_targets_found"] / r["small_targets_total"]
@@ -189,13 +222,8 @@ def aggregate_records(records: list[dict[str, Any]]) -> dict[str, Any]:
                 if r["late_targets_total"]
             ),
             "metrics": {
-                name: _metric_summary([float(r[name]) for r in rows])
+                name: _metric_summary([float(r[name]) for r in rows if r.get(name) is not None])
                 for name in _AGGREGATED_METRICS
-            },
-            "notes": {
-                "communication_energy_j": (
-                    "not modelled in V2 (no remote path); excluded from aggregation"
-                )
             },
         }
     return out
@@ -224,34 +252,37 @@ def paired_comparison(
     def seeds_where(predicate) -> list[int]:
         return [seed for seed, o in complete.items() if predicate(o)]
 
-    light, strong = static_policies
     counts = {
-        "adaptive_succeeds_light_fails": seeds_where(lambda o: o[adaptive_policy] and not o[light]),
-        "adaptive_succeeds_strong_fails": seeds_where(
-            lambda o: o[adaptive_policy] and not o[strong]
-        ),
-        "adaptive_succeeds_both_static_fail": seeds_where(
-            lambda o: o[adaptive_policy] and not o[light] and not o[strong]
+        **{
+            f"adaptive_succeeds_{static}_fails": seeds_where(
+                lambda o, s=static: o[adaptive_policy] and not o[s]
+            )
+            for static in static_policies
+        },
+        "adaptive_succeeds_all_static_fail": seeds_where(
+            lambda o: o[adaptive_policy] and not any(o[s] for s in static_policies)
         ),
         "adaptive_fails_any_static_succeeds": seeds_where(
-            lambda o: not o[adaptive_policy] and (o[light] or o[strong])
+            lambda o: not o[adaptive_policy] and any(o[s] for s in static_policies)
         ),
         "all_succeed": seeds_where(lambda o: all(o.values())),
         "all_fail": seeds_where(lambda o: not any(o.values())),
     }
-    reference = dict(zip((light, strong, adaptive_policy), _REFERENCE_PATTERN, strict=True))
+    #: The design's reference outcome: every static baseline fails, the adaptive
+    #: policy succeeds. Seeds that deviate are the interesting ones and are listed.
+    reference = {**{static: False for static in static_policies}, adaptive_policy: True}
     return {
         "adaptive_policy": adaptive_policy,
         "static_policies": list(static_policies),
         "paired_seed_count": len(complete),
         "patterns": {name: {"count": len(seeds), "seeds": seeds} for name, seeds in counts.items()},
         "counterexamples": {
-            "adaptive_underperforms_light": seeds_where(
-                lambda o: o[light] and not o[adaptive_policy]
-            ),
-            "adaptive_underperforms_strong": seeds_where(
-                lambda o: o[strong] and not o[adaptive_policy]
-            ),
+            **{
+                f"adaptive_underperforms_{static}": seeds_where(
+                    lambda o, s=static: o[s] and not o[adaptive_policy]
+                )
+                for static in static_policies
+            },
             "pattern_differs_from_reference": seeds_where(
                 lambda o: {p: o[p] for p in reference} != reference
             ),
@@ -302,6 +333,11 @@ def fragility_report(
             "claim on this family but says nothing outside it"
         )
 
+    switch_distribution: dict[str, int] = {}
+    for row in successes:
+        key = str(row["config_switch_count"])
+        switch_distribution[key] = switch_distribution.get(key, 0) + 1
+
     return {
         "adaptive_battery_margin": {
             "n_successes": len(successes),
@@ -314,6 +350,7 @@ def fragility_report(
             "count": len(single_switch),
             "of_successes": len(successes),
         },
+        "adaptive_switch_count_distribution": dict(sorted(switch_distribution.items())),
         "flags": flags,
     }
 
@@ -344,7 +381,7 @@ def select_representatives(
         | set(patterns["adaptive_fails_any_static_succeeds"]["seeds"])
     )
     candidates = [
-        ("only_adaptive_succeeds", patterns["adaptive_succeeds_both_static_fail"]["seeds"]),
+        ("only_adaptive_succeeds", patterns["adaptive_succeeds_all_static_fail"]["seeds"]),
         ("all_policies_fail", patterns["all_fail"]["seeds"]),
         ("a_static_policy_succeeds", static_success),
         ("fragile_adaptive_success_battery_margin", fragile),
@@ -376,7 +413,7 @@ def render_report(
 ) -> str:
     lines: list[str] = []
     add = lines.append
-    add("# V2.4 multi-seed hard-scenario evaluation")
+    add("# Multi-seed hard-scenario evaluation")
     add("")
     add(
         f"Family `{manifest['scenario_family_version']}` of base "
@@ -393,28 +430,36 @@ def render_report(
     add("")
     add("## Per-policy outcomes")
     add("")
-    add("| policy | n | success | rate | Wilson 95% CI | quality fail | battery fail |")
-    add("|---|---|---|---|---|---|---|")
+    add(
+        "| policy | n | success | rate | Wilson 95% CI | quality fail | battery fail "
+        "| comm fail | privacy fail |"
+    )
+    add("|---|---|---|---|---|---|---|---|---|")
     for policy, stats in aggregate.items():
         low, high = stats["mission_success_ci_95"]
         add(
             f"| {policy} | {stats['evaluated_scenarios']} | "
             f"{stats['mission_success_count']} | {stats['mission_success_rate']:.3f} | "
             f"[{low:.3f}, {high:.3f}] | {stats['failure_rates']['quality']:.3f} | "
-            f"{stats['failure_rates']['battery']:.3f} |"
+            f"{stats['failure_rates']['battery']:.3f} | "
+            f"{stats['failure_rates']['communication']:.3f} | "
+            f"{stats['failure_rates']['privacy']:.3f} |"
         )
     add("")
     add(
         "| policy | recall mean | precision mean | final battery mean "
-        "| switches mean | skipped mean |"
+        "| comm MB mean | switches mean | skipped mean |"
     )
-    add("|---|---|---|---|---|---|")
+    add("|---|---|---|---|---|---|---|")
     for policy, stats in aggregate.items():
         m = stats["metrics"]
+        comm = m.get("communication_mb")
+        comm_cell = f"{comm['mean']:.1f}" if comm else "n/a"
         add(
             f"| {policy} | {m['target_recall']['mean']:.3f} | "
             f"{m['detection_precision']['mean']:.3f} | "
             f"{m['final_battery_frac']['mean']:.3f} | "
+            f"{comm_cell} | "
             f"{m['config_switch_count']['mean']:.2f} | "
             f"{m['skipped_observations']['mean']:.1f} |"
         )
@@ -449,6 +494,10 @@ def render_report(
         )
     single = fragility["adaptive_single_switch_successes"]
     add(f"- adaptive successes with exactly one switch: {single['count']}/{single['of_successes']}")
+    distribution = fragility.get("adaptive_switch_count_distribution")
+    if distribution:
+        cells = ", ".join(f"{k} switch(es): {v}" for k, v in distribution.items())
+        add(f"- adaptive switch-count distribution over successes: {cells}")
     for flag in fragility["flags"]:
         add(f"- **FLAG**: {flag}")
     if not fragility["flags"]:
@@ -525,7 +574,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--seeds", help="Inclusive range, e.g. 0:29.")
     parser.add_argument("--num-seeds", type=int, default=10)
     parser.add_argument("--seed-start", type=int, default=0)
-    parser.add_argument("--policies", default=",".join(DEFAULT_POLICIES))
+    parser.add_argument(
+        "--policies",
+        default=None,
+        help="Comma-separated policy names; defaults to the base scenario's designed "
+        "set (remote bases add always_remote_strong).",
+    )
     parser.add_argument("--adaptive-policy", default="rule_based")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument(
@@ -536,7 +590,21 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     seeds = _parse_seeds(args)
-    policies = tuple(p for p in args.policies.split(",") if p)
+
+    from aerointentbench.v2.scenario import load_scenario
+
+    try:
+        base_scenario = load_scenario(args.base_scenario)
+    except (SchemaValidationError, SchemaVersionError) as error:
+        print(f"base scenario failed to load: {error}", file=sys.stderr)
+        return 2
+    base_id = base_scenario.scenario_id
+    if args.policies is not None:
+        policies = tuple(p for p in args.policies.split(",") if p)
+    elif any(spec.kind == "simulated_remote" for spec in base_scenario.executor_configs):
+        policies = REMOTE_DEFAULT_POLICIES
+    else:
+        policies = DEFAULT_POLICIES
     statics = tuple(p for p in policies if p != args.adaptive_policy)
 
     out = args.output
@@ -559,10 +627,7 @@ def main(argv: list[str] | None = None) -> int:
             return 2
 
     try:
-        from aerointentbench.v2.scenario import load_scenario
-
         scenario_paths: dict[int, Path] = {}
-        base_id = load_scenario(args.base_scenario).scenario_id
         for seed in seeds:
             scenario_paths[seed] = write_variant(
                 args.base_scenario, seed, scenarios_dir / f"seed_{seed:04d}.json"

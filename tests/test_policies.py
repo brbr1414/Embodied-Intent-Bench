@@ -283,6 +283,7 @@ def test_every_v1_baseline_is_registered() -> None:
         "always_local_light",
         "always_local_strong",
         "always_remote_strong",
+        "budget_planner",
         "rule_based",
         "static",
     )

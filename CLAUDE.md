@@ -124,12 +124,16 @@ documentation. Never present them as hardware results.
 
 ## Branch workflow
 
-- **Never commit to `main`.** `develop/v1` is the integration branch.
-- Every feature branch is created from the **latest `develop/v1`**. `develop/v1` is a
-  branch name containing a slash, not a namespace — there is no branch hierarchy.
+- **Never commit to `main`.** One integration branch per milestone: **`develop/v3` is
+  the current integration branch**; `develop/v1` (V1) and `develop/v2` (V2.0–V2.4) are
+  frozen at their milestone freeze points and must not advance again.
+- Every feature branch is created from the **latest current integration branch**. A
+  branch name containing a slash is just a name, not a namespace — there is no branch
+  hierarchy.
 - Implement only the current branch's responsibility; run the tests; commit logical,
   reviewable changes using conventional commit messages.
-- **Do not merge into `develop/v1` without explicit authorisation from the owner.**
+- **Do not merge into an integration branch or `main`, and do not push, without
+  explicit authorisation from the owner.**
 
 ## V2 (visual closed loop)
 
@@ -177,6 +181,79 @@ zero-pixel projection is recorded, never enlarged; procedural silhouettes are te
 fixtures, never person-performance evidence; `evaluation_purpose`
 (`controlled_observability` / `integration_diagnostic`) results must never be presented
 as aerial-human perception. The V2.0 `procedural_marker` mode stays untouched.
+
+**V3 P1 remote inference + dynamic network + privacy** (`aerointentbench/v2/remote.py`,
+`network.py`, `docs/v3_design.md`): the `simulated_remote` executor kind runs behind
+deployment-ready boundaries (`InferenceTransport` / `RemoteInferenceBackend` /
+`run_with_context`) — a future Jetson client + real server replaces the simulated pair
+without touching runner/policy/evaluator. Rules: remote latency is DERIVED (Model A:
+capture-time network snapshot; formula and per-stage breakdown in docs — never one
+opaque constant); uploads are charged even on failure (partial transfers
+proportionally); communication energy = configured J/MB + activation, charged on every
+attempt, distinct from compute/flight energy; a failed remote attempt is
+`success=False` + status, never a silent empty prediction; executor-level fallback runs
+on the SAME captured frame with both attempts on the mission clock; the scenario-level
+safe fallback must be local. `network_trace` = named piecewise-constant regimes; the
+policy sees only the current sample as the frozen V1 `NetworkObservation` (no regime
+names, no futures). **V2 mission success is now the 5-constraint AND incl. privacy**
+(V1 `privacy_permits` verbatim: remote raw-RGB configs are forbidden under `local_only`
+AND `features_only`; blocked selections are counted violations). Local-only scenarios
+keep their outcomes (pinned). Protocol models are wire-representable
+(`protocol_version "1.0"`). No real server/RPC/Jetson in this milestone; nothing here
+is a hardware claim.
+
+**V3 P4 real-data pilot** (`experiments/real_segmentation_pilot/uavid.py`,
+`torchvision_models.py`, `uavid_pilot.py`, `docs/v3_design.md` §P4): UAVid (real
+oblique UAV imagery, CC BY-NC-SA, local-only — NEVER committed) ran through the
+UNCHANGED V1 empirical chain (run_inference → build_pilot → build/validate bundle →
+`run_benchmark --executor replay`). 12 keyframes / 164 derived person instances;
+measured recall LRASPP 0.030, DeepLabV3 0.122 — an expected DOMAIN-MISMATCH
+diagnostic, never attainable-perception evidence. Honesty rules this pilot added:
+person instances are DERIVED (connected components of the semantic Humans class;
+touching people merge; no temporal identity → per-instance recall), evaluation uses
+1280x720 native windows because the frozen dense-mask wire format makes full-4K
+crowded frames multi-GB (measured), out-of-domain models need a documented
+physical-size component cap (else building-sized "person" blobs → GB of masks), and
+latency is measured while energy is assumed → the measurement column is labelled
+`estimated`. `experiments/real_segmentation_pilot/STATUS.md` is the current state;
+the old "no real pilot" claims there are superseded.
+
+**V3 P3 policy skyline** (`aerointentbench/v2/skyline.py`,
+`aerointentbench/policies/budget_planner.py`, `docs/v3_design.md` §P3): the skyline
+is a GT-AWARE offline upper bound (forward DP over the closed loop, per-slot outcomes
+from the mission's own renderer/executors/evaluator, Pareto pruning on
+clock/energy/communication, legal actions only — privacy-forbidden configs excluded,
+budget-exceeding branches cut). Every output is labelled `gt_aware: true` + "not a
+policy"; NEVER present a skyline number as a policy/baseline result. target_recall
+contracts only (loud error otherwise); soundness/determinism/replay-consistency
+pinned by tests. `budget_planner` is a registered V1 policy (pro-rata comm pacing
+with bounded burst + EMA battery-drain projection from its own observations;
+stateful within one episode — composition root builds per run). Result on both P2
+bases: skyline recall 1.0 (satisfiable; light + 2 remote + 2 perfectly-timed strong)
+vs rule_based 0.75 vs budget_planner FAIL 0.5 — the planner's duty-cycling halves
+the strong cadence and misses odd-slot lates. Both findings kept honestly: large
+measurable headroom AND sophistication-does-not-auto-win; do not tune the planner
+against the family. Artifacts `results/v3_skyline/` (local-only).
+
+**V3 P2 statistical hardening** (`docs/v3_design.md` §P2): two remote-aware hard bases
+(`demo_img1_remote_hard.json` / `demo_img2_remote_hard.json`) put all five constraint
+axes in play — the intended 4-way pattern (light→quality, strong→battery,
+remote→communication FAIL; rule_based SUCCESS via remote→local_strong→local_light,
+two switches) was verified with real models on both worlds before freezing. Family
+2.0: battery and late-height bands are RELATIVE to the base (families port across
+bases/worlds); network sampling jitters regime boundaries ±2 s and scales link
+quality ×0.75–1.3 / RTT ×0.85–1.25, but regime structure, order, packet loss, and
+reachability classes are base identity and never resampled; small-target band stays
+the absolute Stage-B 0.70–0.80 m. Result (seeds 0–99, both worlds): rule_based
+55/100 [0.452,0.644] on img_1 and 32/100 [0.237,0.417] on img_2 vs ALL three statics
+0/100 [0,0.037]; zero counterexamples; rule averaged 11.7 remote attempts with zero
+failures. Honest flags kept: ~half the successes clear the battery floor by <0.01
+(deliberate knife-edge); every success is exactly two switches (two-stage escalation,
+not free-form adaptation); img_2's lower rate documents world sensitivity — never
+quote a single cross-world number. `multi_seed_eval` auto-selects the 4-policy set
+for remote bases, records comm/privacy/network_behaviour fields, and generalises the
+paired comparison to N statics. Batch results live in `results/v3_remote_multiseed/`
+(local-only).
 
 **V2.4 multi-seed evaluation** (`aerointentbench/v2/scenario_family.py`,
 `multi_seed_eval.py`, `docs/v2_design.md` §10.6): the hard scenario generalises to a

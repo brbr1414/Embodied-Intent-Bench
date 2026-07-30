@@ -28,6 +28,7 @@ from aerointentbench.schemas.loading import (
     SchemaVersionError,
     read_json_object,
 )
+from aerointentbench.v2.network import NetworkRegime
 
 __all__ = [
     "SCENARIO_SCHEMA_VERSION",
@@ -99,8 +100,17 @@ _SIMULATION_FIELDS: Final = (
     "fallback_config_id",
     "matching_iou_threshold",
     "network",
+    "network_trace",
 )
 _NETWORK_FIELDS: Final = ("bandwidth_mbps", "rtt_ms", "packet_loss_frac")
+_NETWORK_REGIME_FIELDS: Final = (
+    "regime_id",
+    "start_s",
+    "uplink_mbps",
+    "downlink_mbps",
+    "rtt_ms",
+    "packet_loss_frac",
+)
 _OBJECT_FIELDS: Final = (
     "object_id",
     "class_id",
@@ -136,11 +146,24 @@ _CONTRACT_FIELDS: Final = (
     "deadline_s",
     "communication_budget_mb",
     "min_final_battery_frac",
+    "privacy_level",
 )
 
 #: The executor kinds V2 ships. The two heuristic kinds are the V2.0 test backends; the
-#: torch kind is the V2.1 real-model seam and needs the optional [v2-real-models] extra.
-_EXECUTOR_KINDS: Final = ("fast_weak", "slow_strong", "torch_semantic_segmentation")
+#: torch kind is the V2.1 real-model seam and needs the optional [v2-real-models] extra;
+#: ``simulated_remote`` (V3 P1) is the deployment-boundary remote path — its backend is
+#: one of the other kinds run "server-side".
+_EXECUTOR_KINDS: Final = (
+    "fast_weak",
+    "slow_strong",
+    "torch_semantic_segmentation",
+    "simulated_remote",
+)
+
+#: Required entries in ``parameters`` for a simulated_remote executor. Everything else
+#: (encoding/queue/energy coefficients, fallback_config_id, download size, loss ceiling)
+#: has documented defaults in ``aerointentbench.v2.remote.REMOTE_PARAMETER_DEFAULTS``.
+_REMOTE_REQUIRED_PARAMETERS: Final = ("backend_kind", "remote_compute_s", "timeout_s")
 _TRAJECTORY_TYPES: Final = ("polyline", "lawnmower")
 
 #: Required entries in ``parameters`` for a torch_semantic_segmentation executor. Kept in
@@ -208,8 +231,11 @@ class SimulationSpec:
     fallback_config_id: str
     #: IoU at which a predicted component counts as matching a ground-truth instance.
     matching_iou_threshold: float
-    #: Constant policy-visible network conditions (V2 does not model a link yet).
+    #: Constant policy-visible network conditions, used when no trace is declared.
     network: tuple[float, float, float]  # bandwidth_mbps, rtt_ms, packet_loss_frac
+    #: Optional time-varying named network regimes (V3 P1). When present, the runner
+    #: samples this piecewise-constant trace instead of the constant ``network``.
+    network_trace: tuple[NetworkRegime, ...] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -404,6 +430,22 @@ def _read_camera(reader: DocumentReader) -> CameraSpec:
 
 def _read_simulation(reader: DocumentReader) -> SimulationSpec:
     network = reader.get_object("network", allowed_fields=_NETWORK_FIELDS)
+    trace: tuple[NetworkRegime, ...] | None = None
+    if reader.get_passthrough("network_trace") is not None:
+        regimes = [
+            NetworkRegime(
+                regime_id=entry.get_str("regime_id"),
+                start_s=entry.get_float("start_s", minimum=0.0),
+                uplink_mbps=entry.get_float("uplink_mbps", minimum=0.0),
+                downlink_mbps=entry.get_float("downlink_mbps", minimum=0.0),
+                rtt_ms=entry.get_float("rtt_ms", minimum=0.0),
+                packet_loss_frac=entry.get_fraction("packet_loss_frac"),
+            )
+            for entry in reader.get_object_list(
+                "network_trace", allowed_fields=_NETWORK_REGIME_FIELDS
+            )
+        ]
+        trace = tuple(regimes)
     return SimulationSpec(
         observation_interval_s=reader.get_float("observation_interval_s", exclusive_minimum=0.0),
         fallback_config_id=reader.get_str("fallback_config_id"),
@@ -415,6 +457,7 @@ def _read_simulation(reader: DocumentReader) -> SimulationSpec:
             network.get_float("rtt_ms", minimum=0.0),
             network.get_fraction("packet_loss_frac"),
         ),
+        network_trace=trace,
     )
 
 
@@ -510,6 +553,8 @@ def _read_executors(reader: DocumentReader) -> tuple[ExecutorConfigSpec, ...]:
         parameters = entry.get_scalar_mapping("parameters")
         if kind == "torch_semantic_segmentation":
             _validate_torch_parameters(parameters, entry.context)
+        if kind == "simulated_remote":
+            _validate_remote_parameters(parameters, entry.context)
         executors.append(
             ExecutorConfigSpec(
                 config_id=config_id,
@@ -534,8 +579,21 @@ def _read_contract(reader: DocumentReader) -> Contract:
 
     Reusing the frozen V1 dataclass keeps the policy interface identical -- a V1 policy
     receives exactly the contract type it already knows -- without touching the V1 file
-    schema. Task identity and privacy are fixed for V2's single visual task.
+    schema. Task identity is fixed for V2's single visual task; ``privacy_level`` is
+    declarable since V3 P1 (default ``remote_allowed``, the historical V2 behaviour).
     """
+    declared_privacy = reader.get_optional_str("privacy_level")
+    try:
+        privacy = (
+            PrivacyLevel(declared_privacy)
+            if declared_privacy is not None
+            else PrivacyLevel.REMOTE_ALLOWED
+        )
+    except ValueError:
+        raise SchemaValidationError(
+            f"{reader.context}: privacy_level {declared_privacy!r} must be one of "
+            f"{[level.value for level in PrivacyLevel]}"
+        ) from None
     return Contract(
         contract_id=reader.get_str("contract_id"),
         task_id="HUMAN_SEARCH_SEGMENTATION",
@@ -546,7 +604,7 @@ def _read_contract(reader: DocumentReader) -> Contract:
         deadline_s=reader.get_float("deadline_s", exclusive_minimum=0.0),
         communication_budget_mb=reader.get_float("communication_budget_mb", minimum=0.0),
         min_final_battery_frac=reader.get_fraction("min_final_battery_frac"),
-        privacy_level=PrivacyLevel.REMOTE_ALLOWED,
+        privacy_level=privacy,
     )
 
 
@@ -586,6 +644,29 @@ def _validate_torch_parameters(parameters: Mapping[str, Any], context: str) -> N
         )
 
 
+def _validate_remote_parameters(parameters: Mapping[str, Any], context: str) -> None:
+    """Validate a simulated_remote executor's model-strategy parameters at load time."""
+    missing = [key for key in _REMOTE_REQUIRED_PARAMETERS if key not in parameters]
+    if missing:
+        raise SchemaValidationError(
+            f"{context}: a simulated_remote executor requires parameters "
+            f"{list(_REMOTE_REQUIRED_PARAMETERS)}; missing {missing}"
+        )
+    backend = parameters["backend_kind"]
+    local_kinds = tuple(k for k in _EXECUTOR_KINDS if k != "simulated_remote")
+    if backend not in local_kinds:
+        raise SchemaValidationError(
+            f"{context}: backend_kind {backend!r} must be one of {list(local_kinds)} "
+            "(a remote backend is an existing model kind run server-side)"
+        )
+    for key in ("remote_compute_s", "timeout_s"):
+        value = parameters[key]
+        if not isinstance(value, (int, float)) or isinstance(value, bool) or value <= 0:
+            raise SchemaValidationError(
+                f"{context}: {key} must be a positive number, got {value!r}"
+            )
+
+
 # --- cross-document checks -------------------------------------------------------------------
 
 
@@ -618,6 +699,28 @@ def _cross_validate(scenario: V2Scenario, context: str) -> None:
         raise SchemaValidationError(
             f"{context}: object(s) {[o.object_id for o in image_objects]} use render_mode "
             "'image_asset' but the scenario declares no 'assets_manifest'"
+        )
+
+    if scenario.simulation.network_trace is not None:
+        from aerointentbench.v2.network import V2NetworkModel
+
+        V2NetworkModel(scenario.simulation.network_trace)  # fails loudly at load time
+
+    local_ids = {s.config_id for s in scenario.executor_configs if s.kind != "simulated_remote"}
+    for spec in scenario.executor_configs:
+        if spec.kind != "simulated_remote":
+            continue
+        fallback = spec.parameters.get("fallback_config_id")
+        if fallback is not None and fallback not in local_ids:
+            raise SchemaValidationError(
+                f"{context}: remote config {spec.config_id!r} names fallback_config_id "
+                f"{fallback!r}, which is not a local executor_config in this scenario"
+            )
+    if scenario.simulation.fallback_config_id not in local_ids:
+        raise SchemaValidationError(
+            f"{context}: the scenario-level fallback_config_id "
+            f"{scenario.simulation.fallback_config_id!r} must be a local configuration -- "
+            "the safe fallback may never depend on the network"
         )
 
 

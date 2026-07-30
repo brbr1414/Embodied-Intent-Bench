@@ -420,7 +420,7 @@ function drawFrame() {
   const gt = document.getElementById("frame-gt");
   gt.src = e.frames.gt_debug; gt.hidden = !gtToggle.checked;
   const missedHere = e.score.visible_target_ids.filter(t => !e.score.matched_target_ids.includes(t));
-  kv("frame-meta", [
+  const rows = [
     ["requested config", e.requested_config_id ?? "(policy failure)"],
     ["executed config", e.executed_config_id + (e.fallback_used ? "  (fallback)" : "")],
     ["inference latency", `${e.execution.mission_latency_s.toFixed(2)} s ` +
@@ -431,7 +431,26 @@ function drawFrame() {
     ["false positives", `${e.score.false_positive_components}`],
     ["matched target ids", e.score.matched_target_ids.join(", ") || "—"],
     ["visible-but-missed here", missedHere.join(", ") || "—"],
-  ]);
+  ];
+  // Remote transport diagnostics (V3 P1): system behaviour, never perception quality.
+  const remote = (e.execution.diagnostics && e.execution.diagnostics.remote_status)
+    ? e.execution.diagnostics : null;
+  if (remote) {
+    const net = remote.network;
+    rows.push(
+      ["remote status", remote.remote_status +
+        (remote.failure_reason ? ` — ${remote.failure_reason}` : "")],
+      ["network regime", `${net.regime_id} · ${net.uplink_mbps}/${net.downlink_mbps} Mbps · ` +
+        `${net.rtt_ms} ms · loss ${net.packet_loss_frac}`],
+      ["transfer", `up ${remote.uploaded_mb.toFixed(2)} MB · down ` +
+        `${remote.downloaded_mb.toFixed(2)} MB · radio ` +
+        `${(e.execution.communication_energy_j ?? 0).toFixed(1)} J`],
+    );
+    if (remote.fallback) rows.push(
+      ["remote fallback", `${remote.fallback.fallback_config_id} ran on the same capture ` +
+        `(+${remote.fallback.fallback_latency_s.toFixed(2)} s)`]);
+  }
+  kv("frame-meta", rows);
 }
 
 // ---- dashboard ------------------------------------------------------------------------
@@ -463,6 +482,11 @@ function drawBanner() {
 function drawConstraints() {
   const cs = EVENTS[activeIdx].constraint_status, atEnd = activeIdx === N - 1;
   const st = name => atEnd ? FINAL.constraint_status[name] : cs[name].status;
+  // Privacy is active since V3 P1: real status + declared level where a remote path
+  // exists; NOT_APPLICABLE (older bundles / local-only scenarios) otherwise.
+  const privacyValue = cs.privacy.privacy_level ?? "no remote path";
+  const privacyMargin = cs.privacy.violations_so_far !== undefined
+    ? `${cs.privacy.violations_so_far} violation(s)` : "—";
   const rows = [
     ["quality", st("quality"), fmt(cs.quality.interim_value),
       `${cs.quality.operator} ${cs.quality.threshold}`, "—"],
@@ -473,7 +497,7 @@ function drawConstraints() {
       `${(cs.battery.margin_frac * 100).toFixed(1)} pt`],
     ["communication", st("communication"), `${cs.communication.used_mb.toFixed(2)} MB`,
       `${cs.communication.budget_mb.toFixed(1)} MB`, `${cs.communication.remaining_mb.toFixed(2)} MB left`],
-    ["privacy", "NOT_APPLICABLE", "no remote path", "—", "—"],
+    ["privacy", cs.privacy.status, privacyValue, "no violation attempts", privacyMargin],
   ];
   document.querySelector("#constraint-table tbody").innerHTML = rows.map(
     ([n, s, v, l, m]) => `<tr><td>${n}</td><td>${pill(s)}</td><td>${v}</td><td>${l}</td><td>${m}</td></tr>`
