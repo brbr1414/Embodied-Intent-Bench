@@ -434,7 +434,39 @@ attainable aerial-person perception.
 Details and reproduction: `experiments/real_segmentation_pilot/STATUS.md`. Artifacts
 in `results/uavid_pilot/` (local-only).
 
-## Later V3 milestones (not implemented)
+## V3 freeze
+
+V3 closes with P4: all four roadmap milestones shipped (P1 remote/network/privacy,
+P2 two-world 100-seed hardening, P3 skyline + budget planner, P4 real-data
+grounding). Freeze checklist (all verified at freeze preparation):
+
+- [x] full default test suite passes without torch, datasets, or local assets
+      (780 passed; opt-in markers `real_models` / `real_assets` stay deselected)
+- [x] `ruff check` and `ruff format --check` clean
+- [x] V1 frozen and byte-identical; V2 local-only scenario outcomes pinned unchanged
+      under the 5-constraint success definition
+- [x] deterministic family 2.0 generation (same seed → identical bytes; network
+      sampling recorded in provenance) and resumable batch evaluation
+- [x] no GT leakage into policy-visible state (pinned at every layer); the skyline is
+      the one deliberately GT-aware component and is labelled so in every output
+- [x] every quantity labels its provenance (simulated / configured / derived /
+      measured / estimated); no hardware claims anywhere
+- [x] counterexample seeds and negative results preserved (budget planner's losses,
+      battery knife-edge flags, domain-mismatch recall)
+- [x] restricted data untracked (human PNGs, rasters, UAVid and its derivatives,
+      batch artifacts — all gitignored/local-only)
+- [x] clean working tree at the freeze commit; merges and pushes only with owner
+      authorisation
+
+Claim-status vocabulary for anything citing V3: **supported across seeds on two
+worlds** (P2: adaptive-only success, statics 0/100, zero counterexamples) /
+**demonstrated per scenario** (P3 skyline headroom; P4 pipeline grounding) /
+**not evaluated** (real radios, real servers, aerial-trained checkpoints,
+attainable aerial-person perception) / **out of scope for V3** (3D simulation → V4,
+learned policies, physical flight).
+
+## Beyond V3 (not implemented)
 
 Reference deployment (real Jetson client + inference service behind the P1
-interfaces); an aerial-trained checkpoint for a publication-grade P4 follow-up.
+interfaces); an aerial-trained checkpoint for a publication-grade P4 follow-up;
+V4 = the 3D simulator adapter behind the existing world/trajectory/renderer seams.
