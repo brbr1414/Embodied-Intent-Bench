@@ -191,9 +191,134 @@ Model A in-flight invariance; no retries; no concurrent requests; raw-RGB payloa
 only; single remote backend per config; remote compute energy not tracked (server-side
 cost is not the vehicle's); regime traces are hand-authored, not measured.
 
+## P2 — statistical hardening: remote-aware hard family, two worlds, 100 seeds
+
+**Research question.** Is "adaptive configuration selection decides the mission" a
+pattern that survives when all five constraint axes are live, when the world imagery
+changes, and when the sample is large enough for meaningful intervals — or was V2.4's
+result an artefact of one world and a dormant network?
+
+### Remote-aware hard base scenarios
+
+Two committed bases carry the V2.4 hard trade-off structure **plus** the P1
+remote/network path, so quality, deadline, battery, communication, and privacy can all
+independently fail:
+
+- `data/v2_scenarios/demo_img1_remote_hard.json` (`V2_IMG1_REMOTE_HARD`) — the V2.4
+  world and trajectory.
+- `data/v2_scenarios/demo_img2_remote_hard.json` (`V2_IMG2_REMOTE_HARD`) — a second
+  OpenAerialMap world (`img_2`, 0.039 m/px, open scrubland field), same trajectory
+  geometry, executors, network trace, and contract, so cross-world comparisons vary
+  only the background imagery. Late walking targets anchor at 1.9 m (vs 1.5 m on
+  img_1) because the light model needs more pixels against this background —
+  "comfortably detectable" is a world property, measured before freezing the base.
+
+Design (both bases): 4 small early targets (~32 px, Stage-B band) defeat the light
+model; 4 large late targets sit on odd capture slots ≥ 41 s so the strong executor's
+2-capture cadence skips them; the link starts good (`5g_good`, remote viable at
+~0.6 s derived latency) and degrades (`lte_degraded` at 12 s → `disconnected` →
+`recovered_weak`), so remote inference is only ever useful early; the 26 MB
+communication budget is sized so an always-remote policy breaches it while the
+adaptive policy's affordability rule stops in time; strong compute (600 J/call) and
+the radio (60 J/MB uplink, stress-configured like V2.4's accelerator energy) make
+battery a live constraint on every path. The intended base pattern, verified with
+real models before freezing:
+
+| policy | outcome | failing axis |
+|---|---|---|
+| `always_light_real` | FAIL | quality (small targets invisible) |
+| `always_strong_real` | FAIL | battery (completes, far below floor) |
+| `always_remote_strong` | FAIL | communication (~33 MB > 26 MB) |
+| `rule_based` | SUCCESS | — via remote → local_strong → local_light |
+
+The adaptive success now takes **two switches** (budget/degradation pressure, then
+battery pressure), retiring V2.4's "every success is a single switch" fragility flag
+by design rather than by relaxing the flag.
+
+### Family 2.0
+
+`scenario_family.FAMILY_VERSION = "2.0"` generalises the family across bases and adds
+network dimensions (full history in the module docstring):
+
+- battery capacity: relative band (base × 0.97–1.03) instead of a hardcoded absolute
+  band;
+- late-target heights: relative to the base late target of the same pose
+  (× 0.93–1.07);
+- network (bases with a `network_trace`): regime boundaries jitter ± 2 s, within-regime
+  uplink/downlink scale together × 0.75–1.3, RTT × 0.85–1.25. Regime structure, order,
+  packet loss, and reachability classes are base identity and never resampled.
+
+All sampled values are recorded under `provenance.scenario_family` (including the full
+sampled trace). Family 1.1 variant identities change with the version bump; the V2.4
+30-seed result under 1.1 stands as recorded history.
+
+### Evaluation harness
+
+`multi_seed_eval` gains the remote axis: bases with a `simulated_remote` executor
+default to the 4-policy set (`always_light_real`, `always_strong_real`,
+`always_remote_strong`, `rule_based`); per-run records restate
+`communication_mb` / `communication_margin_mb` / `communication_energy_j` /
+`network_behaviour` from the mission result; aggregates add communication and privacy
+failure rates; the paired comparison generalises to any number of static baselines;
+the fragility report adds the adaptive switch-count distribution.
+
+### Results (100 seeds x 4 policies x 2 worlds, family 2.0)
+
+Seeds 0-99, paired by construction, real torchvision models, deterministic configured
+latency/energy. Full artifacts in `results/v3_remote_multiseed/` (local-only,
+gitignored — frames composite non-redistributable assets).
+
+| world | policy | success | Wilson 95% CI | quality fail | battery fail | comm fail |
+|---|---|---|---|---|---|---|
+| img_1 | always_light_real | 0/100 | [0.000, 0.037] | 1.00 | 0.00 | 0.00 |
+| img_1 | always_strong_real | 0/100 | [0.000, 0.037] | 0.90 | 1.00 | 0.00 |
+| img_1 | always_remote_strong | 0/100 | [0.000, 0.037] | 1.00 | 0.00 | 1.00 |
+| img_1 | **rule_based** | **55/100** | **[0.452, 0.644]** | 0.30 | 0.33 | 0.00 |
+| img_2 | always_light_real | 0/100 | [0.000, 0.037] | 1.00 | 0.00 | 0.00 |
+| img_2 | always_strong_real | 0/100 | [0.000, 0.037] | 0.97 | 1.00 | 0.00 |
+| img_2 | always_remote_strong | 0/100 | [0.000, 0.037] | 1.00 | 0.00 | 1.00 |
+| img_2 | **rule_based** | **32/100** | **[0.237, 0.417]** | 0.56 | 0.40 | 0.00 |
+
+- **Paired patterns**: every adaptive success is an only-adaptive success (img_1: 55
+  only-adaptive + 45 all-fail; img_2: 32 + 68). **Zero counterexamples** on either
+  world — no seed where any static policy beats rule_based.
+- **Class separation is the mechanism, on both worlds** (small / late detection):
+  light 0.04/0.78 vs 0.00/0.70, strong 0.99/0.16 vs 0.89/0.11, rule 0.87/0.57 vs
+  0.78/0.56.
+- **Network awareness**: rule_based averaged 11.7 remote attempts with **zero
+  failures** on both worlds (remote only while the link is good); always_remote_strong
+  averaged 29.5 attempts with 16.9 failures and breached the budget on every seed.
+- **The one-switch flag is retired**: every adaptive success now uses exactly **two**
+  switches (remote → local_strong on budget/degradation pressure, → local_light on
+  battery pressure). Honest note: the switch count is uniform — the family exercises a
+  two-stage escalation, not free-form adaptation; richer behaviour needs the P3
+  policy work, not more seeds.
+- **Fragility (kept, by design)**: 26/55 (img_1) and 16/32 (img_2) successes clear the
+  battery floor by < 0.01. The family deliberately probes the knife-edge; adaptive
+  failures (45 and 68 seeds) are preserved in `runs.jsonl` and counted against the
+  claim, not excluded.
+- **Cross-world sensitivity**: img_2 is markedly harder for quality (0.56 vs 0.30
+  adaptive quality-failure rate) — background texture changes model behaviour even
+  with identical mission design. This is exactly the evidence the second world exists
+  to produce: the qualitative claim (adaptive-only success, statics at 0/100) holds,
+  while absolute rates are world-dependent and must never be quoted as a single
+  number.
+
+Claim vocabulary (docs/v2_design.md §11): "adaptive beats every static baseline under
+live network/privacy/communication axes" is now **supported-across-seeds on two
+worlds**; anything about real radios, real servers, or real aerial-human perception
+remains **not-evaluated**.
+
+### Honesty
+
+Everything from P1's labels carries over: configured/simulated energies and stage
+times, derived latencies, synthetic generated humans, integration diagnostics — never
+real UAV, radio, model-serving, or aerial-human-perception performance. The battery
+knife-edge is deliberate (the family probes it); seeds where the adaptive policy fails
+are preserved, listed, and counted against the claim.
+
 ## Later V3 milestones (not implemented)
 
-P2 statistical hardening (100 seeds, second world, remote-aware hard family);
 P3 policy skyline (GT-aware offline upper bound + budget planner);
 P4 real-data grounding through the V1 empirical bundle pipeline;
 reference deployment (real Jetson client + inference service behind these interfaces).

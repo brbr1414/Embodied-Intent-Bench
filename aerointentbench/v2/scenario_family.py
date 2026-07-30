@@ -13,13 +13,21 @@ varying the quantities a field mission would not control:
   final lane, lateral offset, size, pose, rotation. Their ~1.5 s visibility windows
   stay centred near odd capture times — that misalignment with the strong executor's
   2-capture cadence *is* the family's defining stress, not a tunable.
-- **Battery capacity** within a narrow band, which moves the adaptive policy's
-  battery-pressure switch time and probes the fragility of its final margin.
+- **Battery capacity** within a narrow band around the base scenario's value, which
+  moves the adaptive policy's battery-pressure switch time and probes the fragility of
+  its final margin.
+- **Network conditions** (only for bases that declare a ``network_trace``, V3 P2):
+  regime boundary times within a small window and within-regime link quality within a
+  band. The regime *structure* — names, order, and reachability classes (good /
+  degraded / disconnected / weak recovery) — is part of the base design and is never
+  resampled; the family varies when the degradation arrives and how bad it is, which is
+  exactly what a field mission would not control.
 
 What is deliberately NOT varied: the executor configs (configured latencies/energies),
-the contract, the trajectory, the camera, and the world image. Outcome variation must
-come from where targets fall and how the real models respond — never from forcing a
-winner. Seeds that break the hypothesis are kept and reported.
+the contract (including its privacy level), the trajectory, the camera, the world
+image, and the network regime structure. Outcome variation must come from where
+targets fall, when the link turns, and how the real models respond — never from
+forcing a winner. Seeds that break the hypothesis are kept and reported.
 
 Determinism: every variant is a pure function of
 ``(FAMILY_VERSION, base scenario id, seed)``. All sampled values are rounded, recorded
@@ -40,6 +48,18 @@ Version history (a sampling change is a version bump — variant identity depend
   path completion. On the base trajectory that fixes the late slot *set* at
   {41, 43, 45, 47}; late-target variation comes from jitter, lateral offset, size,
   pose, rotation, background patch, and battery capacity — not slot choice.
+- **2.0** (V3 P2): the family generalises across base scenarios and gains network
+  dimensions. Battery capacity is sampled *relative* to the base value (x0.97-1.03,
+  reproducing the 1.1 band on the V2.4 base) instead of a hardcoded absolute band;
+  late-target heights are sampled relative to the base late target of the same pose
+  (x0.93-1.07) because "comfortably detectable by both models" is a property of each
+  world's background, while the small-target band stays the absolute Stage-B-validated
+  0.70-0.80 m. For bases declaring a ``network_trace``, regime boundary times jitter
+  +-2.0 s and within-regime link quality scales x0.75-1.3 (uplink and downlink
+  together; RTT x0.85-1.25); regime structure, order, reachability classes, and packet
+  loss are base design and never resampled. All 1.1 variant identities change (the
+  version participates in the RNG stream); the V2.4 30-seed result under 1.1 stands as
+  recorded history.
 """
 
 from __future__ import annotations
@@ -57,7 +77,7 @@ from aerointentbench.v2.trajectory import PolylineTrajectory, build_trajectory
 __all__ = ["FAMILY_VERSION", "variant_id", "write_variant"]
 
 #: Version of the family sampling scheme; bump on any change to what or how we sample.
-FAMILY_VERSION: Final = "1.1"
+FAMILY_VERSION: Final = "2.0"
 
 #: Asset aspect ratios (width/height) of the poses the base scenario uses, from the
 #: asset manifest's nominal physical dimensions.
@@ -66,13 +86,26 @@ _POSES: Final = {
     "standing": {"asset_id": "person_aerial_standing_001", "aspect": 1.42 / 2.25},
 }
 #: Small-target ground extent (m): the Stage-B-validated "light model detects nothing"
-#: band (~30-34 px at the base scenario's 42.7 px/m).
+#: band (~30-34 px at the base scenario's 42.7 px/m). Absolute — a perceptual constant
+#: of the rendered pixel size, not a property of any one world.
 _SMALL_HEIGHT_RANGE: Final = (0.70, 0.80)
-#: Large late-target extents per pose (m) — comfortably detectable by both models.
-_LATE_HEIGHT_RANGE: Final = {"standing": (2.0, 2.25), "walking": (1.40, 1.60)}
+#: Late-target height factor relative to the base scenario's late target of the same
+#: pose. "Comfortably detectable by both models" depends on each world's background,
+#: so the base scenario owns the operating point and the family probes around it.
+_LATE_HEIGHT_REL_RANGE: Final = (0.93, 1.07)
 _LATERAL_OFFSET_MAX_M: Final = 1.2
 _ROTATION_MAX_DEG: Final = 45.0
-_BATTERY_CAPACITY_RANGE_WH: Final = (6.60, 7.00)
+#: Battery capacity factor relative to the base scenario's capacity (reproduces the
+#: 1.1 absolute band on the V2.4 base: 6.806 Wh x 0.97-1.03 = 6.60-7.01 Wh).
+_BATTERY_CAPACITY_REL_RANGE: Final = (0.97, 1.03)
+#: Network sampling bands (bases with a ``network_trace`` only): regime boundary
+#: jitter, a single link-quality factor applied to uplink and downlink together, and
+#: an independent RTT factor. Packet loss and reachability are regime identity.
+_REGIME_START_JITTER_S: Final = 2.0
+_LINK_SCALE_RANGE: Final = (0.75, 1.3)
+_RTT_SCALE_RANGE: Final = (0.85, 1.25)
+#: Minimum surviving gap between consecutive regime starts after jitter.
+_REGIME_MIN_GAP_S: Final = 1.0
 #: Time jitter around the chosen capture slot. Small targets stay within +-0.3 s of an
 #: even slot (their window always covers a strong-processed capture); late targets stay
 #: within +-0.1 s of an odd slot (their window never covers one, up to a possible
@@ -125,6 +158,7 @@ def generate_variant(base_scenario_path: Path, seed: int) -> dict[str, Any]:
 
     late_poses = ["standing", "standing", "walking", "walking"]
     rng.shuffle(late_poses)
+    base_late_heights = _base_late_heights(base)
 
     targets: list[dict[str, Any]] = []
     sampled: list[dict[str, Any]] = []
@@ -148,7 +182,7 @@ def generate_variant(base_scenario_path: Path, seed: int) -> dict[str, Any]:
         )
     for index, slot in enumerate(late_times):
         pose = late_poses[index]
-        height = round(rng.uniform(*_LATE_HEIGHT_RANGE[pose]), 3)
+        height = round(base_late_heights[pose] * rng.uniform(*_LATE_HEIGHT_REL_RANGE), 3)
         targets.append(
             _target(
                 object_id=f"TGT_E{index + 1}_{pose.upper()}_LATE",
@@ -166,25 +200,93 @@ def generate_variant(base_scenario_path: Path, seed: int) -> dict[str, Any]:
         )
 
     distractor = _distractor(rng, trajectory, base)
-    battery_wh = round(rng.uniform(*_BATTERY_CAPACITY_RANGE_WH), 3)
+    battery_wh = round(
+        base.drone.battery_capacity_wh * rng.uniform(*_BATTERY_CAPACITY_REL_RANGE), 3
+    )
 
     payload = dict(base_raw)
     payload["scenario_id"] = variant_id(base.scenario_id, seed)
     payload["random_seed"] = seed
     payload["drone"] = {**base_raw["drone"], "battery_capacity_wh": battery_wh}
     payload["objects"] = [*targets, distractor]
+
+    family: dict[str, Any] = {
+        "family_version": FAMILY_VERSION,
+        "base_scenario_id": base.scenario_id,
+        "base_scenario_sha256": hashlib.sha256(base_scenario_path.read_bytes()).hexdigest(),
+        "seed": seed,
+        "battery_capacity_wh": battery_wh,
+        "targets": sampled,
+    }
+    base_trace = (base_raw.get("simulation") or {}).get("network_trace")
+    if base_trace:
+        sampled_trace = _sample_network_trace(rng, base_trace)
+        payload["simulation"] = {**base_raw["simulation"], "network_trace": sampled_trace}
+        family["network_regimes"] = sampled_trace
+
     payload["provenance"] = {
         **dict(base_raw.get("provenance") or {}),
-        "scenario_family": {
-            "family_version": FAMILY_VERSION,
-            "base_scenario_id": base.scenario_id,
-            "base_scenario_sha256": hashlib.sha256(base_scenario_path.read_bytes()).hexdigest(),
-            "seed": seed,
-            "battery_capacity_wh": battery_wh,
-            "targets": sampled,
-        },
+        "scenario_family": family,
     }
     return payload
+
+
+# --- sampling helpers ------------------------------------------------------------------------
+
+
+def _base_late_heights(base: V2Scenario) -> dict[str, float]:
+    """The base scenario's late-target height per pose — the family's anchor points."""
+    asset_to_pose = {info["asset_id"]: pose for pose, info in _POSES.items()}
+    heights: dict[str, float] = {}
+    for obj in base.targets:
+        if not obj.object_id.startswith("TGT_E"):
+            continue
+        pose = asset_to_pose.get(getattr(obj, "asset_id", None))
+        if pose is not None and pose not in heights:
+            heights[pose] = obj.height_m
+    missing = [pose for pose in _POSES if pose not in heights]
+    if missing:
+        raise SchemaValidationError(
+            f"the scenario family needs a base late target for every pose; "
+            f"base {base.scenario_id!r} declares none for {missing}"
+        )
+    return heights
+
+
+def _sample_network_trace(
+    rng: random.Random, base_trace: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Jitter regime boundaries and scale within-regime link quality, structure fixed.
+
+    The first regime keeps ``start_s`` 0.0 (the trace contract). Unreachable regimes
+    (zero uplink or downlink) are copied verbatim — disconnection is regime identity,
+    not a sampled quantity — as is ``packet_loss_frac`` everywhere, because crossing a
+    transport's loss ceiling would silently change a regime's failure class.
+    """
+    sampled: list[dict[str, Any]] = []
+    previous_start = 0.0
+    for index, regime in enumerate(base_trace):
+        entry = dict(regime)
+        if index > 0:
+            jitter = rng.uniform(-_REGIME_START_JITTER_S, _REGIME_START_JITTER_S)
+            entry["start_s"] = round(float(regime["start_s"]) + jitter, 1)
+            if entry["start_s"] < previous_start + _REGIME_MIN_GAP_S:
+                raise SchemaValidationError(
+                    f"network regime {entry.get('regime_id')!r} start "
+                    f"{entry['start_s']} collides with the previous regime at "
+                    f"{previous_start}; the base trace's gaps are too small for "
+                    f"+-{_REGIME_START_JITTER_S} s jitter"
+                )
+        reachable = float(regime["uplink_mbps"]) > 0.0 and float(regime["downlink_mbps"]) > 0.0
+        if reachable:
+            link_scale = rng.uniform(*_LINK_SCALE_RANGE)
+            rtt_scale = rng.uniform(*_RTT_SCALE_RANGE)
+            entry["uplink_mbps"] = round(float(regime["uplink_mbps"]) * link_scale, 1)
+            entry["downlink_mbps"] = round(float(regime["downlink_mbps"]) * link_scale, 1)
+            entry["rtt_ms"] = round(float(regime["rtt_ms"]) * rtt_scale, 1)
+        sampled.append(entry)
+        previous_start = float(entry["start_s"])
+    return sampled
 
 
 # --- geometry helpers ------------------------------------------------------------------------

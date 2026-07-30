@@ -124,12 +124,16 @@ documentation. Never present them as hardware results.
 
 ## Branch workflow
 
-- **Never commit to `main`.** `develop/v1` is the integration branch.
-- Every feature branch is created from the **latest `develop/v1`**. `develop/v1` is a
-  branch name containing a slash, not a namespace — there is no branch hierarchy.
+- **Never commit to `main`.** One integration branch per milestone: **`develop/v3` is
+  the current integration branch**; `develop/v1` (V1) and `develop/v2` (V2.0–V2.4) are
+  frozen at their milestone freeze points and must not advance again.
+- Every feature branch is created from the **latest current integration branch**. A
+  branch name containing a slash is just a name, not a namespace — there is no branch
+  hierarchy.
 - Implement only the current branch's responsibility; run the tests; commit logical,
   reviewable changes using conventional commit messages.
-- **Do not merge into `develop/v1` without explicit authorisation from the owner.**
+- **Do not merge into an integration branch or `main`, and do not push, without
+  explicit authorisation from the owner.**
 
 ## V2 (visual closed loop)
 
@@ -197,6 +201,26 @@ AND `features_only`; blocked selections are counted violations). Local-only scen
 keep their outcomes (pinned). Protocol models are wire-representable
 (`protocol_version "1.0"`). No real server/RPC/Jetson in this milestone; nothing here
 is a hardware claim.
+
+**V3 P2 statistical hardening** (`docs/v3_design.md` §P2): two remote-aware hard bases
+(`demo_img1_remote_hard.json` / `demo_img2_remote_hard.json`) put all five constraint
+axes in play — the intended 4-way pattern (light→quality, strong→battery,
+remote→communication FAIL; rule_based SUCCESS via remote→local_strong→local_light,
+two switches) was verified with real models on both worlds before freezing. Family
+2.0: battery and late-height bands are RELATIVE to the base (families port across
+bases/worlds); network sampling jitters regime boundaries ±2 s and scales link
+quality ×0.75–1.3 / RTT ×0.85–1.25, but regime structure, order, packet loss, and
+reachability classes are base identity and never resampled; small-target band stays
+the absolute Stage-B 0.70–0.80 m. Result (seeds 0–99, both worlds): rule_based
+55/100 [0.452,0.644] on img_1 and 32/100 [0.237,0.417] on img_2 vs ALL three statics
+0/100 [0,0.037]; zero counterexamples; rule averaged 11.7 remote attempts with zero
+failures. Honest flags kept: ~half the successes clear the battery floor by <0.01
+(deliberate knife-edge); every success is exactly two switches (two-stage escalation,
+not free-form adaptation); img_2's lower rate documents world sensitivity — never
+quote a single cross-world number. `multi_seed_eval` auto-selects the 4-policy set
+for remote bases, records comm/privacy/network_behaviour fields, and generalises the
+paired comparison to N statics. Batch results live in `results/v3_remote_multiseed/`
+(local-only).
 
 **V2.4 multi-seed evaluation** (`aerointentbench/v2/scenario_family.py`,
 `multi_seed_eval.py`, `docs/v2_design.md` §10.6): the hard scenario generalises to a
