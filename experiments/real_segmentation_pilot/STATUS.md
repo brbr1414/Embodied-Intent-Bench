@@ -1,46 +1,64 @@
 # Real-segmentation pilot — status
 
-**No real empirical bundle has been produced. The real pilot is blocked on assets that are
-not present in this environment.** This directory contains only reusable, tested tooling that
-runs the real pilot once those assets are supplied. Per the pilot's scientific rule, nothing
-here fabricates a result — there are no hand-authored prediction masks, no invented latency,
-and no made-up energy in any committed file.
+**A real pilot has been run (V3 P4, 2026-07-30): real UAV imagery (UAVid) x real
+pretrained models (torchvision LRASPP / DeepLabV3), through the unchanged V1 empirical
+bundle pipeline and benchmark CLI.** The earlier blockers table is obsolete: torch,
+torchvision, official DEFAULT checkpoints, and an Apple-silicon `mps` device have been
+available since V2.1, and UAVid is downloaded locally (never committed).
 
-## Missing assets (the exact blockers)
+## What the pilot is — and is not
 
-| Required | State in this environment |
-|---|---|
-| Aerial / UAV instance-segmentation dataset (person masks, frame order, track ids if available) | **absent** — no imagery or annotations in the repo; repo policy forbids committing datasets |
-| Model checkpoints | **absent** — no `.pt` / `.pth` / `.onnx` weights |
-| Model stack (PyTorch / Ultralytics / ONNX Runtime) | **not installed** — the benchmark is zero-dependency; imports fail |
-| GPU / accelerator | **absent** — CPU-only (arm64). The latency protocol needs device synchronisation for meaningful numbers |
+- **Real**: imagery (UAVid oblique urban UAV keyframes), annotations (semantic Humans
+  masks), model inference (tiled 512 px windows), measured per-frame latency (wall
+  clock with device sync).
+- **Derived**: person *instances* are connected components of the semantic Humans
+  class (UAVid has no instance or track annotations); each instance is its own target,
+  so track-level recall reads as per-instance recall. Windowed evaluation
+  (1280x720 native crops centred on annotated activity) keeps the frozen dense-mask
+  wire format writable — full-4K crowded frames produce multi-GB ground truth.
+- **Estimated**: energy (assumed 20 W package power x measured time), labelled
+  `estimated` end to end.
+- **Not a claim**: COCO/VOC checkpoints were not trained on aerial imagery. The
+  measured recall (LRASPP 0.030, DeepLabV3 0.122 over 164 derived instances) is a
+  **domain-mismatch diagnostic**, consistent with the V2.1/V2.2 synthetic findings —
+  it grounds the pipeline in real data; it does not measure attainable aerial-person
+  perception. Do not quote these numbers as model quality.
 
-Because of these, the two acceptance criteria that require *real* execution — real model
-inference and measured latency on real data — cannot be met here. Fabricating them is
-explicitly forbidden, so they are left undone and reported.
+## How to reproduce (local-only)
 
-## What is delivered instead
+```bash
+# dataset (≈4 GB, anonymous kagglehub mirror of the official layout):
+~/.venvs/dstools/bin/python -c "import kagglehub; kagglehub.dataset_download('awsaf49/uavid-semantic-segmentation-dataset')"
 
-The task permits, when assets are missing, implementing "only the reusable pilot tooling that
-can be verified." That is what this is:
+# pilot: inference -> sources -> bundle (built AND validated by the standard tools)
+.venv/bin/python -m experiments.real_segmentation_pilot.uavid_pilot --output results/uavid_pilot
 
-- `interfaces.py` — `DatasetAdapter` / `SegmentationModel` boundaries, in-memory + stub
-  implementations for tests, and a real-backend stub that raises until weights and extras are
-  supplied.
-- `masks.py` — nearest-neighbour binary-mask resize onto the GT grid.
-- `measure.py` — the latency protocol (warm-up, monotonic clock, per-frame samples, mean /
-  median / p95 / min / max) and mandatory energy provenance.
-- `convert.py`, `run_inference.py`, `build_pilot.py` — write model output into the empirical
-  bundle *source* formats and hand them to the existing `build_empirical_bundle` /
-  `validate_empirical_bundle`, unchanged.
+# the ordinary benchmark CLI over the bundle
+.venv/bin/python -m aerointentbench.run_benchmark \
+  --data-root results/uavid_pilot/bundle \
+  --episode results/uavid_pilot/bundle/episodes/episode.json \
+  --contract results/uavid_pilot/bundle/contracts/contract.json \
+  --policy rule_based --executor replay
+```
 
-`tests/test_real_segmentation_pilot.py` verifies all of the above end to end using a
-**stub model** over a tiny in-memory dataset — never a real model, and it commits no bundle.
+Everything under `results/` is gitignored: UAVid derivatives are CC BY-NC-SA
+(non-commercial research) and are never committed or redistributed.
 
-## To run the real pilot (when assets exist)
+## Module map
 
-See `README.md`. In short: create a pilot environment with `requirements.txt`, write a
-concrete `DatasetAdapter` for your dataset and a `SegmentationModel` for each configuration,
-run `run_inference` per configuration, then `build_pilot` → the standard benchmark CLI. Fill
-`PILOT_ANALYSIS_TEMPLATE.md` from the real results — **it is a template with every question
-still PENDING**, not a set of answers.
+- `interfaces.py` / `masks.py` / `measure.py` / `convert.py` / `run_inference.py` /
+  `build_pilot.py` — the dataset- and model-agnostic pilot tooling (unchanged; still
+  verified by the stub-based CI tests, which never touch torch or the dataset).
+- `uavid.py` — the UAVid `DatasetAdapter` (official layout; windowed; derivation and
+  curation rules recorded in `provenance()`).
+- `torchvision_models.py` — tiled `SegmentationModel` wrappers (lazy torch import,
+  person index from weight metadata, physical-size prior on components).
+- `uavid_pilot.py` — the end-to-end pilot entry point.
+
+## Honest limitations, kept
+
+No aerial-trained checkpoint (the headline gap); no real track identities; instance
+derivation merges touching people; energy is an assumption; the curated subset is 12
+keyframes chosen for moderate annotated density. A publication-grade result needs an
+aerial-person model (or fine-tuning) and a dataset with true instance/track labels —
+`PILOT_ANALYSIS_TEMPLATE.md` remains the form to fill when that exists.

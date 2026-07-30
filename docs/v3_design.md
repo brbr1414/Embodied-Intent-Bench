@@ -382,7 +382,59 @@ Artifacts: `results/v3_skyline/` (local-only). The skyline is exact only for
 `target_recall` contracts (the found-set is the DP state; other metrics are not
 set-representable) — enforced with a loud error.
 
+## P4 — real-data grounding: the UAVid pilot
+
+**Research question.** Does the frozen V1 empirical pipeline actually carry real data
+— real imagery, real annotations, real model inference, measured latency — end to end
+without modification, and what does honesty require when it does?
+
+### What ran
+
+UAVid (real oblique UAV keyframes, official layout, obtained locally via an anonymous
+mirror; CC BY-NC-SA — never committed) through
+`experiments/real_segmentation_pilot/`: a windowed `DatasetAdapter`
+(`uavid.py`), tiled torchvision `SegmentationModel` wrappers
+(`torchvision_models.py`, LRASPP light / DeepLabV3 strong, official DEFAULT weights,
+person index from weight metadata), the unchanged `run_inference` → `build_pilot` →
+`build_empirical_bundle` → `validate_empirical_bundle` chain, and finally the ordinary
+`run_benchmark --executor replay` CLI. 12 keyframes, 164 derived person instances,
+two configurations, strict coverage, bundle validated.
+
+### Results (diagnostics, not model-quality claims)
+
+| config | recall | precision | note |
+|---|---|---|---|
+| CFG_LOCAL_LIGHT (LRASPP) | 0.030 | 0.075 | 5/164 found |
+| CFG_LOCAL_STRONG (DeepLabV3) | 0.122 | 0.313 | 20/164 found |
+
+Both static missions fail the 0.5-recall contract; the adaptive policies inherit the
+perception ceiling. This is the **expected domain-mismatch outcome** measured on real
+data for the first time — consistent with V2.1/V2.2's synthetic findings, and the
+concrete motivation for an aerial-trained checkpoint. Never present these numbers as
+attainable aerial-person perception.
+
+### What the pilot forced into the open (kept honestly)
+
+- **Derived instances**: UAVid is semantic-only; person instances are connected
+  components of the Humans class, touching people merge, and no temporal identity
+  exists — every instance is its own target, so track-level recall reads as
+  per-instance recall. All recorded in the adapter's provenance.
+- **The dense-mask format has a real capacity limit**: full-4K crowded frames produce
+  multi-GB ground truth under the frozen V1 wire format (measured: 6.4 GB for 16
+  frames before the run was stopped). The pilot therefore evaluates 1280x720 native
+  windows centred on annotated activity — curation recorded per frame. A future
+  schema revision (RLE or bbox-local masks) is the structural fix; the frozen "1.0"
+  stays as is.
+- **Out-of-domain models need physical priors**: without a component-size cap the
+  checkpoints emit building-sized "person" blobs (gigabytes of masks). The cap is a
+  model-side post-processing choice, documented, never annotation-derived.
+- Latency is measured (device-synced wall clock); energy is an assumption
+  (20 W x time), so the whole measurement column is labelled `estimated`.
+
+Details and reproduction: `experiments/real_segmentation_pilot/STATUS.md`. Artifacts
+in `results/uavid_pilot/` (local-only).
+
 ## Later V3 milestones (not implemented)
 
-P4 real-data grounding through the V1 empirical bundle pipeline;
-reference deployment (real Jetson client + inference service behind these interfaces).
+Reference deployment (real Jetson client + inference service behind the P1
+interfaces); an aerial-trained checkpoint for a publication-grade P4 follow-up.

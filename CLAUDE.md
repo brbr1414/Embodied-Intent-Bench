@@ -202,6 +202,22 @@ keep their outcomes (pinned). Protocol models are wire-representable
 (`protocol_version "1.0"`). No real server/RPC/Jetson in this milestone; nothing here
 is a hardware claim.
 
+**V3 P4 real-data pilot** (`experiments/real_segmentation_pilot/uavid.py`,
+`torchvision_models.py`, `uavid_pilot.py`, `docs/v3_design.md` §P4): UAVid (real
+oblique UAV imagery, CC BY-NC-SA, local-only — NEVER committed) ran through the
+UNCHANGED V1 empirical chain (run_inference → build_pilot → build/validate bundle →
+`run_benchmark --executor replay`). 12 keyframes / 164 derived person instances;
+measured recall LRASPP 0.030, DeepLabV3 0.122 — an expected DOMAIN-MISMATCH
+diagnostic, never attainable-perception evidence. Honesty rules this pilot added:
+person instances are DERIVED (connected components of the semantic Humans class;
+touching people merge; no temporal identity → per-instance recall), evaluation uses
+1280x720 native windows because the frozen dense-mask wire format makes full-4K
+crowded frames multi-GB (measured), out-of-domain models need a documented
+physical-size component cap (else building-sized "person" blobs → GB of masks), and
+latency is measured while energy is assumed → the measurement column is labelled
+`estimated`. `experiments/real_segmentation_pilot/STATUS.md` is the current state;
+the old "no real pilot" claims there are superseded.
+
 **V3 P3 policy skyline** (`aerointentbench/v2/skyline.py`,
 `aerointentbench/policies/budget_planner.py`, `docs/v3_design.md` §P3): the skyline
 is a GT-AWARE offline upper bound (forward DP over the closed loop, per-slot outcomes
