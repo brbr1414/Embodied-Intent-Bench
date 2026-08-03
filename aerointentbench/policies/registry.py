@@ -14,6 +14,8 @@ from aerointentbench.policies.base import Policy, policy_registry
 from aerointentbench.policies.budget_planner import BudgetPlannerPolicy
 from aerointentbench.policies.rule_based import RuleBasedPolicy
 from aerointentbench.policies.static import StaticPolicy
+from aerointentbench.policies.sticky_escalation import StickyEscalationPolicy
+from aerointentbench.policies.utility import UtilityPolicy
 
 __all__ = ["policy_registry"]
 
@@ -37,6 +39,15 @@ policy_registry.register("rule_based", RuleBasedPolicy)
 #: final battery from its own observations. Stateful within one episode; the
 #: composition root constructs policies per run.
 policy_registry.register("budget_planner", BudgetPlannerPolicy)
+
+#: The scoring baseline: a scalar cost-benefit utility per configuration, argmax per
+#: step — soft trade-offs where rule_based eliminates lexicographically.
+policy_registry.register("utility", UtilityPolicy)
+
+#: The commitment baseline: utility scoring plus switching hysteresis (a challenger
+#: must win for dwell_steps before a non-emergency switch) — the explicit answer to
+#: the per-step-argmax flapping the P3 evaluation exposed. Stateful within one episode.
+policy_registry.register("sticky_escalation", StickyEscalationPolicy)
 
 #: Available for a catalog whose configuration IDs differ from the shipped fixtures.
 policy_registry.register("static", StaticPolicy)

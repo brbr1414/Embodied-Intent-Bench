@@ -286,6 +286,8 @@ def test_every_v1_baseline_is_registered() -> None:
         "budget_planner",
         "rule_based",
         "static",
+        "sticky_escalation",
+        "utility",
     )
 
 

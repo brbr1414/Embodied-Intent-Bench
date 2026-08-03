@@ -202,6 +202,22 @@ keep their outcomes (pinned). Protocol models are wire-representable
 (`protocol_version "1.0"`). No real server/RPC/Jetson in this milestone; nothing here
 is a hardware claim.
 
+**V3x extensions (post-freeze)** (`docs/v3x_extensions.md`): the model zoo and two
+policy baselines, added without touching frozen semantics. All six torchvision
+segmentation checkpoints are usable (the torch backend resolves any model id;
+verified person=idx15, measured forwards 8.4–116.7 ms); the zoo scenario
+`demo_img1_model_zoo.json` carries 5 local tiers + 2 remote tiers, configured
+latencies preserving the MEASURED ORDER (labelled). Headline: DeepLabV3-R101 (61M
+params) scores recall 0.125 — worse than 3.2M LRASPP — cadence-3 skipping + battery
+drain; bigger is not better under a contract. New policies: `utility` (scalar
+cost-benefit argmax) and `sticky_escalation` (utility + dwell hysteresis with
+battery/dead-link emergency overrides — the answer to P3's flapping). Honest result
+on the hard family (seeds 0–9): rule_based 5/10 & 4/10 > sticky 1/10 & 2/10 >
+utility 0/10 — hysteresis fixes the flapping mechanism, not the outcome; the
+family's late-window timing is co-designed with rule_based's escalation, and
+re-tuning either side to flip rows is forbidden. The spectrum (static → reactive →
+scored → committed, bounded by the skyline) is the deliverable.
+
 **V3 P4 real-data pilot** (`experiments/real_segmentation_pilot/uavid.py`,
 `torchvision_models.py`, `uavid_pilot.py`, `docs/v3_design.md` §P4): UAVid (real
 oblique UAV imagery, CC BY-NC-SA, local-only — NEVER committed) ran through the
