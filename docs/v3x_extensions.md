@@ -92,3 +92,69 @@ Honest reading, consistent with P3's "sophistication does not automatically win"
 
 Artifacts: `results/v3x_zoo/` (local-only). Full-100-seed runs for the new policies
 are a follow-up if a claim beyond "development-grade sample" is ever needed.
+
+## 4. Hardware-grounded profiles (2026-08-06): measured Jetson values as scenario variants
+
+The zoo scenario's configured latency/energy values were deliberate mission-scale
+stress settings. After the Jetson measurement campaign
+(`experiments/jetson_power/RESULTS.md`: AGX Orin 64GB and AGX Xavier 32GB, both at
+their default power modes), the owner-approved grounding decision replaced
+assumptions with measurements — as **new scenario variants**, one per board, leaving
+`demo_img1_model_zoo.json` and its documented results untouched:
+
+- `data/v2_scenarios/demo_img1_model_zoo_orin.json`
+- `data/v2_scenarios/demo_img1_model_zoo_xavier.json`
+- generator (rules + sources recorded in provenance):
+  `experiments/jetson_power/make_hw_profiles.py`
+
+Derivation: local configs carry **measured absolute values** at each config's own
+input resolution (mean latency; **marginal** energy per call — compute only); the
+measured idle floor (~6–7 W) is folded into `flight_power_w`, which is where the A4
+cadence finding says an always-on board belongs; remote uploads keep the raw-RGB
+privacy premise but carry measured raw frame sizes (0.590 / 1.327 MB vs the old
+2.0 / 0.6); `uplink_energy_j_per_mb` and all server-side terms stay configured
+(B4: TX power is not measurable on the devkit rails). `battery_capacity_wh` (3.0)
+is a designed value, labelled as such.
+
+### Verified outcomes (real models, single runs, frozen before documenting)
+
+| policy | Orin profile | Xavier profile |
+|---|---|---|
+| local_light_real | FAIL quality (4/8, 56 FPs) | FAIL quality (4/8) |
+| local_strong_real | **SUCCESS** (8/8) | **SUCCESS** (8/8) |
+| local_heavy_real | **SUCCESS** (8/8, 0 skips) | FAIL quality (4/8 — **24 of 48 slots skipped by the measured 1.086 s latency**) |
+| remote_strong | FAIL quality (30 obs; raw uploads cap coverage) | FAIL quality (same) |
+| rule_based | SUCCESS (= static strong; stays local) | SUCCESS (12 remote → 36 local_strong) |
+
+Honest findings, in order of importance:
+
+1. **The hardware profile decides whether the headline trade-off exists at all.**
+   On the Orin at 30 W the model-size dilemma *evaporates* — the 61M-parameter
+   model measures 0.271 s / 4.15 J and simply succeeds. On the Xavier the same
+   model measures 1.086 s, physically cannot hold the 1 Hz cadence, skips half the
+   mission's observations and fails quality — the original zoo's "bigger is not
+   better" mechanism reproduced from measurement rather than configuration. A user
+   choosing a hardware profile is choosing which regime they are benchmarking.
+2. **A well-chosen static suffices on both profiles**: `rule_based` succeeds but
+   does not beat `local_strong_real` (on Orin it selects it verbatim). These
+   single-scenario diagnostics do not require adaptation — the discriminating
+   pressure that motivates adaptive policies lives in the harder families, and no
+   knob was turned here to manufacture an adaptive win.
+3. **The battery constraint never bound** (worst final fraction 0.28 vs floor
+   0.22). Separating heavy from strong on the Orin by battery would need a
+   ~75 J (1.2 %) knife-edge — measurement-noise theatre, deliberately not done.
+   The binding axes are quality (real model + real latency) and communication
+   (raw 1.327 MB uploads cap remote coverage at ~19 calls of the 26 MB budget).
+
+Artifacts: `results/v3x_hw_profiles/` (local-only). Caveats: bench measurements of
+inference on devkits (no flight load, no radio, lab thermals); board-default power
+modes only; single verification runs, not seed campaigns.
+
+**Telemetry (2026-08-06 addition).** Both profiles enable the periodic
+ground-station uplink (`docs/v2_design.md` §10.7): 1 Hz status reports sized on the
+measured 353 B protocol envelope (0.001 MB with headroom), transmit energy at the
+configured 60 J/MB stress value. Re-verified with telemetry on: every
+success/failure outcome above is unchanged (per mission: ~47 report attempts,
+exactly 12 lost during the 26–38 s disconnected regime, ~0.035 MB sent — status
+traffic is deliberately cheap here; the schema supports heavier reports for
+scenarios that want telemetry to genuinely contend for the budget).
