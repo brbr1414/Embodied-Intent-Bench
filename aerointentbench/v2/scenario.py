@@ -101,7 +101,9 @@ _SIMULATION_FIELDS: Final = (
     "matching_iou_threshold",
     "network",
     "network_trace",
+    "telemetry",
 )
+_TELEMETRY_FIELDS: Final = ("interval_s", "report_mb", "energy_j_per_mb", "max_loss_frac")
 _NETWORK_FIELDS: Final = ("bandwidth_mbps", "rtt_ms", "packet_loss_frac")
 _NETWORK_REGIME_FIELDS: Final = (
     "regime_id",
@@ -224,6 +226,26 @@ class CameraSpec:
 
 
 @dataclass(frozen=True, slots=True)
+class TelemetrySpec:
+    """Periodic status uplink the drone sends regardless of where inference runs.
+
+    Models the mission-progress reports (position, battery, status, detection summary)
+    a real search UAV streams to its ground station even when perception is fully
+    local. Reports are asynchronous and never block the perception loop (no latency
+    charge); each attempt at its scheduled mission time uses the capture-time network
+    sample — sent when the uplink is up and loss is within ``max_loss_frac``, silently
+    lost otherwise (lost reports transfer nothing and cost nothing). Sent report MB
+    count against the mission communication budget; report energy is charged to the
+    battery, ledgered separately from remote-inference transfer energy.
+    """
+
+    interval_s: float
+    report_mb: float
+    energy_j_per_mb: float
+    max_loss_frac: float
+
+
+@dataclass(frozen=True, slots=True)
 class SimulationSpec:
     observation_interval_s: float
     #: Safe fallback when the policy's action is invalid. Declared explicitly -- a V2
@@ -236,6 +258,9 @@ class SimulationSpec:
     #: Optional time-varying named network regimes (V3 P1). When present, the runner
     #: samples this piecewise-constant trace instead of the constant ``network``.
     network_trace: tuple[NetworkRegime, ...] | None = None
+    #: Optional periodic ground-station telemetry. Absent means no telemetry traffic —
+    #: existing scenarios and their results are untouched.
+    telemetry: TelemetrySpec | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -446,6 +471,15 @@ def _read_simulation(reader: DocumentReader) -> SimulationSpec:
             )
         ]
         trace = tuple(regimes)
+    telemetry: TelemetrySpec | None = None
+    if reader.get_passthrough("telemetry") is not None:
+        telemetry_reader = reader.get_object("telemetry", allowed_fields=_TELEMETRY_FIELDS)
+        telemetry = TelemetrySpec(
+            interval_s=telemetry_reader.get_float("interval_s", exclusive_minimum=0.0),
+            report_mb=telemetry_reader.get_float("report_mb", minimum=0.0),
+            energy_j_per_mb=telemetry_reader.get_float("energy_j_per_mb", minimum=0.0),
+            max_loss_frac=telemetry_reader.get_fraction("max_loss_frac"),
+        )
     return SimulationSpec(
         observation_interval_s=reader.get_float("observation_interval_s", exclusive_minimum=0.0),
         fallback_config_id=reader.get_str("fallback_config_id"),
@@ -458,6 +492,7 @@ def _read_simulation(reader: DocumentReader) -> SimulationSpec:
             network.get_fraction("packet_loss_frac"),
         ),
         network_trace=trace,
+        telemetry=telemetry,
     )
 
 

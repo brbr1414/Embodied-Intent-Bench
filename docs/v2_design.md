@@ -527,3 +527,40 @@ per-config measurements through the existing V1 empirical bundle builder for
 reproducible replay. Toward **V4**: replace `WorldSource`/`Trajectory`/`CameraRenderer`
 with a 3D simulator adapter (AirSim / Isaac / Gazebo) behind the same interfaces; the
 runner, policy interface, and evaluation are designed to survive that swap.
+
+## 10.7 Periodic ground-station telemetry (2026-08-06)
+
+A real search UAV streams mission-progress reports (position, battery, status,
+detection summary) to its ground station even when perception runs fully local; the
+closed loop previously generated communication only when a remote configuration was
+selected. The optional `simulation.telemetry` block adds that background uplink:
+
+```json
+"telemetry": {"interval_s": 1.0, "report_mb": 0.001,
+              "energy_j_per_mb": 60.0, "max_loss_frac": 0.5}
+```
+
+Semantics (pinned by `tests/test_v2_telemetry.py`):
+
+- Reports are scheduled on mission time (`interval_s`, first at one interval) and
+  each attempt is evaluated against the **capture-time network sample at its own
+  scheduled time**: sent when the uplink is up and packet loss is within
+  `max_loss_frac`, otherwise **lost — nothing transferred, nothing charged**, the
+  loss only counted.
+- Sent report MB join the mission communication ledger and therefore **share the
+  contract's `communication_budget_mb`** — telemetry can genuinely crowd out
+  offloading (or, sized aggressively, fail the constraint on its own). Transmit
+  energy (`report_mb x energy_j_per_mb`) is charged to the battery but ledgered
+  separately from remote-inference transfer energy.
+- Reports never block or delay the perception loop (no latency charge), and are
+  asynchronous fire-and-forget: no retransmission, no queueing across an outage.
+- **A scenario without the field has no telemetry and byte-identical results** —
+  every existing scenario and pinned outcome is untouched.
+
+The result record gains `telemetry_reports_sent / _lost`, `telemetry_mb`, and
+`telemetry_energy_j` (additive fields, zero when disabled). The hardware-grounded
+zoo profiles (`docs/v3x_extensions.md` §4) enable 1 Hz reports sized on the measured
+353 B protocol envelope (~1 KB with status headroom); their transmit energy reuses
+the configured 60 J/MB radio stress value, which remains unmeasurable on the devkit
+rails (B4). This is telemetry only — split computing / partial-feature offload
+remains out of scope and undesigned.

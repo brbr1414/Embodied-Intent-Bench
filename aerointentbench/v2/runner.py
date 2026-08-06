@@ -131,6 +131,11 @@ class V2MissionResult:
     failed_inference_count: int = 0
     communication_energy_j: float = 0.0
     network_behaviour: dict[str, int] = field(default_factory=dict)
+    #: Telemetry additions (additive; all zero when the scenario declares no telemetry).
+    telemetry_reports_sent: int = 0
+    telemetry_reports_lost: int = 0
+    telemetry_mb: float = 0.0
+    telemetry_energy_j: float = 0.0
 
     def to_dict(self, *, include_observations: bool = True) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -156,6 +161,10 @@ class V2MissionResult:
             "failed_inference_count": self.failed_inference_count,
             "communication_energy_j": self.communication_energy_j,
             "network_behaviour": dict(self.network_behaviour),
+            "telemetry_reports_sent": self.telemetry_reports_sent,
+            "telemetry_reports_lost": self.telemetry_reports_lost,
+            "telemetry_mb": self.telemetry_mb,
+            "telemetry_energy_j": self.telemetry_energy_j,
         }
         if include_observations:
             payload["observations"] = [log.to_dict() for log in self.observations]
@@ -300,6 +309,40 @@ class MissionRunner:
         termination = TERMINATION_PATH_COMPLETE
         notes: dict[str, str] = {}
 
+        telemetry = scenario.simulation.telemetry
+        next_report_s = telemetry.interval_s if telemetry is not None else math.inf
+        telemetry_sent = 0
+        telemetry_lost = 0
+        telemetry_mb = 0.0
+        telemetry_energy_j = 0.0
+
+        def send_telemetry_until(until_s: float) -> float:
+            """Attempt every report scheduled up to ``until_s``; return the energy added.
+
+            Each report is attempted at its own scheduled mission time against the
+            network sample at that time: sent reports add MB to the mission
+            communication ledger (they share the contract's budget) and their transmit
+            energy to the battery; a report attempted while the uplink is down or loss
+            exceeds the configured bound is lost — nothing transferred, nothing charged.
+            Reports never block the perception loop.
+            """
+            nonlocal next_report_s, telemetry_sent, telemetry_lost, telemetry_mb
+            nonlocal telemetry_energy_j, communication_mb
+            added_j = 0.0
+            while next_report_s <= until_s + 1e-9:
+                sample = self._network_model.state_at(next_report_s)
+                if sample.uplink_mbps > 0.0 and sample.packet_loss_frac <= telemetry.max_loss_frac:
+                    telemetry_sent += 1
+                    telemetry_mb += telemetry.report_mb
+                    communication_mb += telemetry.report_mb
+                    report_j = telemetry.report_mb * telemetry.energy_j_per_mb
+                    telemetry_energy_j += report_j
+                    added_j += report_j
+                else:
+                    telemetry_lost += 1
+                next_report_s += telemetry.interval_s
+            return added_j
+
         schedule_index = 0
         while True:
             capture_time = schedule_index * interval
@@ -312,6 +355,7 @@ class MissionRunner:
                 # burns battery even though no further observation is processed.
                 end_time = max(mission_time, self._trajectory.duration_s)
                 energy_j += flight_w * max(0.0, end_time - mission_time)
+                energy_j += send_telemetry_until(end_time)
                 battery_frac = max(0.0, 1.0 - energy_j / capacity_j)
                 mission_time = end_time
                 break
@@ -397,6 +441,7 @@ class MissionRunner:
             )
             communication_mb += result.communication_mb
             communication_energy_j += result.communication_energy_j
+            energy_j += send_telemetry_until(completion_time)
             battery_frac = max(0.0, 1.0 - energy_j / capacity_j)
             latencies.append(result.mission_latency_s)
             selections.append(config_id)
@@ -472,6 +517,10 @@ class MissionRunner:
             failed_inferences=failed_inferences,
             communication_energy_j=communication_energy_j,
             network_behaviour=network_behaviour,
+            telemetry_reports_sent=telemetry_sent,
+            telemetry_reports_lost=telemetry_lost,
+            telemetry_mb=telemetry_mb,
+            telemetry_energy_j=telemetry_energy_j,
         )
 
     # -- helpers ------------------------------------------------------------------------
@@ -531,6 +580,10 @@ class MissionRunner:
         failed_inferences: int = 0,
         communication_energy_j: float = 0.0,
         network_behaviour: dict[str, int] | None = None,
+        telemetry_reports_sent: int = 0,
+        telemetry_reports_lost: int = 0,
+        telemetry_mb: float = 0.0,
+        telemetry_energy_j: float = 0.0,
     ) -> V2MissionResult:
         contract = self._scenario.contract
         quality = self._evaluator.quality_details(mission_time_s=mission_time)
@@ -577,6 +630,10 @@ class MissionRunner:
             failed_inference_count=failed_inferences,
             communication_energy_j=communication_energy_j,
             network_behaviour=dict(network_behaviour or {}),
+            telemetry_reports_sent=telemetry_reports_sent,
+            telemetry_reports_lost=telemetry_reports_lost,
+            telemetry_mb=telemetry_mb,
+            telemetry_energy_j=telemetry_energy_j,
         )
 
     # Exposed for the CLI/visualiser/replay exporter so they render through the same
