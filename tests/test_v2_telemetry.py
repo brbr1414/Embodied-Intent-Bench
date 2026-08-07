@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import ClassVar
 
 import pytest
 
@@ -146,3 +147,123 @@ class TestSchema:
     def test_non_positive_interval_is_rejected(self, tmp_path: Path) -> None:
         with pytest.raises(SchemaValidationError):
             _run(tmp_path, **{"simulation.telemetry": dict(TELEMETRY, interval_s=0.0)})
+
+
+class TestEvidence:
+    """Detection evidence: the user sees what the drone believes it found."""
+
+    EVIDENCE: ClassVar[dict] = dict(TELEMETRY, evidence_mb_per_detection=0.003)
+
+    def test_evidence_matches_the_runs_own_predicted_components(self, tmp_path: Path) -> None:
+        result = _run(tmp_path, **{"simulation.telemetry": self.EVIDENCE})
+        detecting = [
+            log.score["predicted_components"]
+            for log in result.observations
+            if log.score["predicted_components"] > 0
+        ]
+        assert detecting, "fixture world should yield at least one predicted detection"
+        assert result.evidence_reports_sent == len(detecting)
+        assert result.evidence_reports_lost == 0
+        assert result.evidence_mb == pytest.approx(0.003 * sum(detecting))
+        assert result.evidence_energy_j == pytest.approx(result.evidence_mb * 10.0)
+        # Evidence shares the mission communication ledger on top of status reports.
+        assert result.cumulative_communication_mb == pytest.approx(
+            result.telemetry_mb + result.evidence_mb
+        )
+
+    def test_evidence_lost_during_an_outage_is_the_visibility_gap(self, tmp_path: Path) -> None:
+        outage = [
+            {
+                "regime_id": "disconnected",
+                "start_s": 0.0,
+                "uplink_mbps": 0.0,
+                "downlink_mbps": 0.0,
+                "rtt_ms": 0.0,
+                "packet_loss_frac": 1.0,
+            }
+        ]
+        result = _run(
+            tmp_path,
+            **{"simulation.telemetry": self.EVIDENCE, "simulation.network_trace": outage},
+        )
+        detecting = sum(1 for log in result.observations if log.score["predicted_components"] > 0)
+        assert result.evidence_reports_sent == 0
+        assert result.evidence_reports_lost == detecting
+        assert result.evidence_mb == 0.0
+
+    def test_default_is_off_and_costs_nothing(self, tmp_path: Path) -> None:
+        result = _run(tmp_path, **{"simulation.telemetry": TELEMETRY})
+        assert result.evidence_reports_sent == 0
+        assert result.evidence_reports_lost == 0
+        assert result.evidence_mb == 0.0
+
+
+class TestStream:
+    """Continuous observation downlink: the control center watches what the drone sees."""
+
+    STREAM: ClassVar[dict] = dict(TELEMETRY, stream_mb_per_observation=0.028)
+
+    def test_one_frame_per_capture_tick_on_the_mission_clock(self, tmp_path: Path) -> None:
+        result = _run(tmp_path, **{"simulation.telemetry": self.STREAM})
+        # 24 s mission at 1 s capture cadence: ticks at t=0..24 inclusive.
+        assert result.stream_frames_sent == 25
+        assert result.stream_frames_lost == 0
+        assert result.stream_mb == pytest.approx(25 * 0.028)
+        assert result.stream_energy_j == pytest.approx(25 * 0.028 * 10.0)
+        assert result.cumulative_communication_mb == pytest.approx(
+            result.telemetry_mb + result.stream_mb
+        )
+
+    def test_outage_frames_are_the_operators_blind_time(self, tmp_path: Path) -> None:
+        trace = [
+            {
+                "regime_id": "good",
+                "start_s": 0.0,
+                "uplink_mbps": 100.0,
+                "downlink_mbps": 200.0,
+                "rtt_ms": 20.0,
+                "packet_loss_frac": 0.0,
+            },
+            {
+                "regime_id": "disconnected",
+                "start_s": 10.5,
+                "uplink_mbps": 0.0,
+                "downlink_mbps": 0.0,
+                "rtt_ms": 0.0,
+                "packet_loss_frac": 1.0,
+            },
+            {
+                "regime_id": "recovered",
+                "start_s": 20.5,
+                "uplink_mbps": 50.0,
+                "downlink_mbps": 100.0,
+                "rtt_ms": 30.0,
+                "packet_loss_frac": 0.0,
+            },
+        ]
+        result = _run(
+            tmp_path,
+            **{"simulation.telemetry": self.STREAM, "simulation.network_trace": trace},
+        )
+        # Frames at t=11..20 fall inside the outage.
+        assert result.stream_frames_lost == 10
+        assert result.stream_frames_sent == 15
+        assert result.stream_mb == pytest.approx(15 * 0.028)
+
+    def test_stream_is_forbidden_off_remote_allowed(self, tmp_path: Path) -> None:
+        with pytest.raises(SchemaValidationError, match="stream_mb_per_observation"):
+            _run(
+                tmp_path,
+                **{
+                    "simulation.telemetry": self.STREAM,
+                    "mission_contract.privacy_level": "features_only",
+                },
+            )
+        with pytest.raises(SchemaValidationError, match="stream_mb_per_observation"):
+            _run(
+                tmp_path,
+                **{
+                    "simulation.telemetry": self.STREAM,
+                    "mission_contract.privacy_level": "local_only",
+                },
+            )

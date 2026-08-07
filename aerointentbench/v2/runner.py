@@ -136,6 +136,19 @@ class V2MissionResult:
     telemetry_reports_lost: int = 0
     telemetry_mb: float = 0.0
     telemetry_energy_j: float = 0.0
+    #: Detection-evidence additions (additive; zero when evidence reporting is off).
+    #: ``lost`` counts observations whose evidence never reached the user — the
+    #: user-visibility gap a later contract constraint could bind on.
+    evidence_reports_sent: int = 0
+    evidence_reports_lost: int = 0
+    evidence_mb: float = 0.0
+    evidence_energy_j: float = 0.0
+    #: Continuous-stream additions (additive; zero when the stream is off).
+    #: ``lost`` frames are the operator's blind time.
+    stream_frames_sent: int = 0
+    stream_frames_lost: int = 0
+    stream_mb: float = 0.0
+    stream_energy_j: float = 0.0
 
     def to_dict(self, *, include_observations: bool = True) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -165,6 +178,14 @@ class V2MissionResult:
             "telemetry_reports_lost": self.telemetry_reports_lost,
             "telemetry_mb": self.telemetry_mb,
             "telemetry_energy_j": self.telemetry_energy_j,
+            "evidence_reports_sent": self.evidence_reports_sent,
+            "evidence_reports_lost": self.evidence_reports_lost,
+            "evidence_mb": self.evidence_mb,
+            "evidence_energy_j": self.evidence_energy_j,
+            "stream_frames_sent": self.stream_frames_sent,
+            "stream_frames_lost": self.stream_frames_lost,
+            "stream_mb": self.stream_mb,
+            "stream_energy_j": self.stream_energy_j,
         }
         if include_observations:
             payload["observations"] = [log.to_dict() for log in self.observations]
@@ -315,6 +336,72 @@ class MissionRunner:
         telemetry_lost = 0
         telemetry_mb = 0.0
         telemetry_energy_j = 0.0
+        evidence_sent = 0
+        evidence_lost = 0
+        evidence_mb = 0.0
+        evidence_energy_j = 0.0
+        streaming = telemetry is not None and telemetry.stream_mb_per_observation > 0.0
+        next_stream_s = 0.0 if streaming else math.inf
+        stream_sent = 0
+        stream_lost = 0
+        stream_mb = 0.0
+        stream_energy_j = 0.0
+
+        def send_stream_until(until_s: float) -> float:
+            """The continuous observation downlink: one frame per capture tick.
+
+            The control center watches what the drone sees — a frame of
+            ``stream_mb_per_observation`` is attempted at every capture-cadence tick on
+            the mission clock (including slots the executor was too busy to process; the
+            camera still saw them). Frames attempted during an outage are lost and free:
+            that count is the operator's blind time. Only legal under ``remote_allowed``
+            (enforced at scenario load).
+            """
+            nonlocal next_stream_s, stream_sent, stream_lost, stream_mb
+            nonlocal stream_energy_j, communication_mb
+            added_j = 0.0
+            while next_stream_s <= until_s + 1e-9:
+                sample = self._network_model.state_at(next_stream_s)
+                if sample.uplink_mbps > 0.0 and sample.packet_loss_frac <= telemetry.max_loss_frac:
+                    stream_sent += 1
+                    stream_mb += telemetry.stream_mb_per_observation
+                    communication_mb += telemetry.stream_mb_per_observation
+                    frame_j = telemetry.stream_mb_per_observation * telemetry.energy_j_per_mb
+                    stream_energy_j += frame_j
+                    added_j += frame_j
+                else:
+                    stream_lost += 1
+                next_stream_s += interval
+            return added_j
+
+        def send_evidence(completion_s: float, predicted_components: int) -> float:
+            """Transmit evidence for one observation's predicted detections; return energy.
+
+            One attempt at completion time against the network sample: the payload is
+            ``predicted_components x evidence_mb_per_detection`` (the drone reports what
+            it BELIEVES it found — false positives spend real communication). During an
+            outage the evidence is lost and free; the loss count is the user-visibility
+            gap. Fire-and-forget like the status reports: no queueing, no retransmit.
+            """
+            nonlocal evidence_sent, evidence_lost, evidence_mb, evidence_energy_j
+            nonlocal communication_mb
+            if (
+                telemetry is None
+                or telemetry.evidence_mb_per_detection <= 0.0
+                or predicted_components <= 0
+            ):
+                return 0.0
+            sample = self._network_model.state_at(completion_s)
+            if sample.uplink_mbps > 0.0 and sample.packet_loss_frac <= telemetry.max_loss_frac:
+                evidence_sent += 1
+                sent_mb = telemetry.evidence_mb_per_detection * predicted_components
+                evidence_mb += sent_mb
+                communication_mb += sent_mb
+                sent_j = sent_mb * telemetry.energy_j_per_mb
+                evidence_energy_j += sent_j
+                return sent_j
+            evidence_lost += 1
+            return 0.0
 
         def send_telemetry_until(until_s: float) -> float:
             """Attempt every report scheduled up to ``until_s``; return the energy added.
@@ -356,6 +443,7 @@ class MissionRunner:
                 end_time = max(mission_time, self._trajectory.duration_s)
                 energy_j += flight_w * max(0.0, end_time - mission_time)
                 energy_j += send_telemetry_until(end_time)
+                energy_j += send_stream_until(end_time)
                 battery_frac = max(0.0, 1.0 - energy_j / capacity_j)
                 mission_time = end_time
                 break
@@ -442,6 +530,8 @@ class MissionRunner:
             communication_mb += result.communication_mb
             communication_energy_j += result.communication_energy_j
             energy_j += send_telemetry_until(completion_time)
+            energy_j += send_stream_until(completion_time)
+            energy_j += send_evidence(completion_time, score.predicted_components)
             battery_frac = max(0.0, 1.0 - energy_j / capacity_j)
             latencies.append(result.mission_latency_s)
             selections.append(config_id)
@@ -521,6 +611,14 @@ class MissionRunner:
             telemetry_reports_lost=telemetry_lost,
             telemetry_mb=telemetry_mb,
             telemetry_energy_j=telemetry_energy_j,
+            evidence_reports_sent=evidence_sent,
+            evidence_reports_lost=evidence_lost,
+            evidence_mb=evidence_mb,
+            evidence_energy_j=evidence_energy_j,
+            stream_frames_sent=stream_sent,
+            stream_frames_lost=stream_lost,
+            stream_mb=stream_mb,
+            stream_energy_j=stream_energy_j,
         )
 
     # -- helpers ------------------------------------------------------------------------
@@ -584,6 +682,14 @@ class MissionRunner:
         telemetry_reports_lost: int = 0,
         telemetry_mb: float = 0.0,
         telemetry_energy_j: float = 0.0,
+        evidence_reports_sent: int = 0,
+        evidence_reports_lost: int = 0,
+        evidence_mb: float = 0.0,
+        evidence_energy_j: float = 0.0,
+        stream_frames_sent: int = 0,
+        stream_frames_lost: int = 0,
+        stream_mb: float = 0.0,
+        stream_energy_j: float = 0.0,
     ) -> V2MissionResult:
         contract = self._scenario.contract
         quality = self._evaluator.quality_details(mission_time_s=mission_time)
@@ -634,6 +740,14 @@ class MissionRunner:
             telemetry_reports_lost=telemetry_reports_lost,
             telemetry_mb=telemetry_mb,
             telemetry_energy_j=telemetry_energy_j,
+            evidence_reports_sent=evidence_reports_sent,
+            evidence_reports_lost=evidence_reports_lost,
+            evidence_mb=evidence_mb,
+            evidence_energy_j=evidence_energy_j,
+            stream_frames_sent=stream_frames_sent,
+            stream_frames_lost=stream_frames_lost,
+            stream_mb=stream_mb,
+            stream_energy_j=stream_energy_j,
         )
 
     # Exposed for the CLI/visualiser/replay exporter so they render through the same

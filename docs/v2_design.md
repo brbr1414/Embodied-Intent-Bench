@@ -599,3 +599,57 @@ the remainder (the *tail*) server-side. Semantics (pinned by
   fixture only. Onboard-full reduced precision needs no new machinery: the torch
   kind's existing ``dtype: float16`` is the quantized tier (int8/TensorRT stays
   out of scope).
+
+## 10.9 Detection-evidence reports (2026-08-07)
+
+"The user must see what the drone found, regardless of where inference ran." The
+telemetry block's optional ``evidence_mb_per_detection`` (default 0.0 = off) adds
+that traffic: when an observation completes with N predicted components, one
+evidence transmission of ``N x evidence_mb_per_detection`` MB is attempted at
+completion time against the capture-time network sample. Semantics (pinned by the
+evidence tests in `tests/test_v2_telemetry.py`):
+
+- The count is the drone's OWN ``predicted_components`` (the evaluator's
+  prediction-side tally — no ground truth involved): **false positives spend real
+  communication**, so an inaccurate model taxes the link as well as the metric
+  (in the deployment matrix, light-fp32's FP burden sends 6.6x the evidence MB of
+  the accurate strong-fp16).
+- Sent evidence shares the contract's communication budget and charges transmit
+  energy to the battery; evidence attempted during an outage is **lost and free**,
+  and ``evidence_reports_lost`` records the **user-visibility gap** — detections
+  the mission made but the user never saw. Fire-and-forget: no queueing or
+  retransmission across outages (a deliberate v1 semantic; a later contract
+  constraint could bind on the gap).
+- Absent field / zero -> byte-identical behaviour; all result fields are additive.
+
+The deployment-matrix scenario grounds the size on measurement: 0.003 MB per
+detection = the measured RLE mask wire size (B2). Whether user-visibility becomes
+a sixth contract constraint is an open owner decision, recorded here.
+
+## 10.10 Continuous observation stream (2026-08-07)
+
+"The drone should just keep sending what it sees." It can — as the third downlink
+layer, ``stream_mb_per_observation`` in the telemetry block: one frame of that size
+is attempted at **every capture-cadence tick on the mission clock** (including
+slots the busy executor skipped — the camera still saw them). Sent frames share
+the communication budget and charge transmit energy; frames attempted during an
+outage are lost and free, and ``stream_frames_lost`` is the **operator's blind
+time**. Sized honestly, a 512x384 JPEG frame is the measured 0.028 MB (B1).
+
+Two consequences the stream makes explicit rather than hiding:
+
+1. **Privacy**: the stream is imagery leaving the vehicle — however downscaled,
+   compression is not de-identification — so a scenario may enable it only under
+   ``remote_allowed`` (load-time error otherwise). Under ``features_only`` /
+   ``local_only`` the user's view is status + evidence, which is what those
+   privacy levels *mean*.
+2. **It does not dissolve the placement question.** A situational stream gives the
+   user awareness; it does not produce masks. Full-quality streaming plus
+   server-side perception is exactly what the ``simulated_remote`` config already
+   models, with its costs. And on the shipped network traces the stream dies in
+   the disconnected regimes — the blind-time counter records precisely when
+   onboard autonomy is the only thing still working.
+
+The three downlink layers compose: **stream** (what the drone sees, ambient,
+remote_allowed only) / **status telemetry** (that the drone is alive, tiny,
+always) / **evidence** (what the drone found, event-driven, prediction-derived).

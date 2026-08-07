@@ -103,7 +103,14 @@ _SIMULATION_FIELDS: Final = (
     "network_trace",
     "telemetry",
 )
-_TELEMETRY_FIELDS: Final = ("interval_s", "report_mb", "energy_j_per_mb", "max_loss_frac")
+_TELEMETRY_FIELDS: Final = (
+    "interval_s",
+    "report_mb",
+    "energy_j_per_mb",
+    "max_loss_frac",
+    "evidence_mb_per_detection",
+    "stream_mb_per_observation",
+)
 _NETWORK_FIELDS: Final = ("bandwidth_mbps", "rtt_ms", "packet_loss_frac")
 _NETWORK_REGIME_FIELDS: Final = (
     "regime_id",
@@ -257,6 +264,19 @@ class TelemetrySpec:
     report_mb: float
     energy_j_per_mb: float
     max_loss_frac: float
+    #: Evidence traffic per predicted detection (0.0 = periodic status reports only).
+    #: When an observation completes with N predicted components, one evidence
+    #: transmission of ``N x evidence_mb_per_detection`` MB is attempted at completion
+    #: time — the user sees what the drone believes it found, so false positives spend
+    #: real communication too. Derived from the drone's own predictions, never ground
+    #: truth.
+    evidence_mb_per_detection: float = 0.0
+    #: Continuous observation downlink (0.0 = off): one frame of this size is attempted
+    #: at every capture tick, so the control center watches what the drone sees. This is
+    #: imagery leaving the vehicle — however downscaled, compression is not
+    #: de-identification — so a scenario may only enable it under ``remote_allowed``
+    #: (validated at load). Frames lost during outages are the operator's blind time.
+    stream_mb_per_observation: float = 0.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -488,11 +508,19 @@ def _read_simulation(reader: DocumentReader) -> SimulationSpec:
     telemetry: TelemetrySpec | None = None
     if reader.get_passthrough("telemetry") is not None:
         telemetry_reader = reader.get_object("telemetry", allowed_fields=_TELEMETRY_FIELDS)
+        evidence_mb = 0.0
+        if telemetry_reader.get_passthrough("evidence_mb_per_detection") is not None:
+            evidence_mb = telemetry_reader.get_float("evidence_mb_per_detection", minimum=0.0)
+        stream_mb = 0.0
+        if telemetry_reader.get_passthrough("stream_mb_per_observation") is not None:
+            stream_mb = telemetry_reader.get_float("stream_mb_per_observation", minimum=0.0)
         telemetry = TelemetrySpec(
             interval_s=telemetry_reader.get_float("interval_s", exclusive_minimum=0.0),
             report_mb=telemetry_reader.get_float("report_mb", minimum=0.0),
             energy_j_per_mb=telemetry_reader.get_float("energy_j_per_mb", minimum=0.0),
             max_loss_frac=telemetry_reader.get_fraction("max_loss_frac"),
+            evidence_mb_per_detection=evidence_mb,
+            stream_mb_per_observation=stream_mb,
         )
     return SimulationSpec(
         observation_interval_s=reader.get_float("observation_interval_s", exclusive_minimum=0.0),
@@ -763,6 +791,17 @@ def _cross_validate(scenario: V2Scenario, context: str) -> None:
         raise SchemaValidationError(
             f"{context}: quality_metric {scenario.contract.quality_metric!r} is not an "
             "empirical V2 metric; use 'target_recall' (canonical) or 'detection_precision'"
+        )
+    telemetry = scenario.simulation.telemetry
+    if (
+        telemetry is not None
+        and telemetry.stream_mb_per_observation > 0.0
+        and scenario.contract.privacy_level is not PrivacyLevel.REMOTE_ALLOWED
+    ):
+        raise SchemaValidationError(
+            f"{context}: stream_mb_per_observation streams imagery off the vehicle, which "
+            f"privacy_level {scenario.contract.privacy_level.value!r} forbids (compression is "
+            "not de-identification); enable the stream only under 'remote_allowed'"
         )
     region = scenario.world.valid_region_m
     if region is not None:
