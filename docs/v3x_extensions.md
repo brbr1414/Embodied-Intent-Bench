@@ -158,3 +158,46 @@ success/failure outcome above is unchanged (per mission: ~47 report attempts,
 exactly 12 lost during the 26–38 s disconnected regime, ~0.035 MB sent — status
 traffic is deliberately cheap here; the schema supports heavier reports for
 scenarios that want telemetry to genuinely contend for the budget).
+
+## 5. Deployment matrix (2026-08-06): onboard fp32 / onboard fp16 / full server / split
+
+Owner-requested diversification of the model options: every model family can now be
+deployed four ways. No new machinery was needed for three of them (onboard fp32 and
+the raw-RGB server path existed; onboard fp16 is the torch kind's existing
+``dtype`` knob); the new ``simulated_split`` executor kind (`docs/v2_design.md`
+§10.8) adds the fourth. Demo:
+`data/v2_scenarios/demo_img1_deployment_matrix.json` — the zoo mission under a
+**features_only** contract, seven configs: lraspp/dlv3_r50 × {fp32, fp16},
+raw-RGB remote (deliberately privacy-forbidden here), and two real split configs
+(dlv3_r50 cut at ``layer2`` = 3.539 MB uint8 features; lraspp cut at ``10`` =
+0.184 MB including the graph-cut low tap — both exact computed sizes).
+
+Verified outcomes (real models; fp16 and split-head costs are labelled
+placeholders pending the lab's measurements — the SAM split-point curves measured
+on the same Xavier, and fp16 board sweeps):
+
+| policy | outcome | failing axis |
+|---|---|---|
+| light fp32 / fp16 | FAIL | quality (0.5) |
+| strong fp32 | FAIL | battery AND quality (1.4 s latency skips half the slots) |
+| strong fp16 | FAIL | battery only (recall 1.0 — 1.0 s holds cadence!) |
+| raw remote | FAIL | privacy (48 blocked selections) + quality |
+| split strong / light | FAIL | quality — 3.5 MB features time out off the good regime |
+| rule_based | FAIL | battery (recall 0.875; nearest miss) |
+
+Honest findings kept: (a) **no tested policy satisfies this contract** — and that
+is documented rather than tuned away, because the attempt exposed something
+better: (b) **the battery floor is a moving target for contract-aware policies**
+(lowering it from 0.22→0.18→0.17 made ``rule_based`` escalate more aggressively
+each time and land just under the floor again — floor placement cannot
+manufacture an adaptive win, which is exactly the co-design trap the benchmark's
+rules warn about); (c) the matrix separates **all five failure axes across
+deployment options**: quality (light, split-over-degraded-link), battery
+(strong), latency-via-cadence (fp32 strong skipping), privacy (raw remote), and
+the fp16 tier's distinct value (only config with recall 1.0 within cadence);
+(d) split's fragility is real dynamics, not configuration — 3.5 MB feature
+uploads outlive the 3 s timeout on every regime after the first 12 s, so each
+attempt burns head energy plus timeout plus fallback and coverage collapses.
+Satisfiability of the contract by some schedule is UNVERIFIED (a skyline run on
+this scenario is the open follow-up). Artifacts:
+`results/v3x_deployment_matrix/` (local-only).
