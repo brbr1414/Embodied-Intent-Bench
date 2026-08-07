@@ -564,3 +564,38 @@ zoo profiles (`docs/v3x_extensions.md` §4) enable 1 Hz reports sized on the mea
 the configured 60 J/MB radio stress value, which remains unmeasurable on the devkit
 rails (B4). This is telemetry only — split computing / partial-feature offload
 remains out of scope and undesigned.
+
+## 10.8 Split inference (2026-08-06)
+
+The third deployment option beside full-onboard and full-server: the
+``simulated_split`` executor kind runs the model's first stages (the *head*)
+onboard, ships the intermediate activations across the simulated link, and runs
+the remainder (the *tail*) server-side. Semantics (pinned by
+`tests/test_v2_split.py`):
+
+- **Graph-cut payload**: the wire payload is every tensor crossing the cut — the
+  running activation plus any backbone tap already produced (LRASPP's low/high
+  taps are priced, never under-counted) — sized from the actual arrays at runtime,
+  never configured. Feature reduction (``feature_dtype``: float32/float16/uint8
+  per-tensor affine) is applied to the tensors the tail actually consumes, so its
+  accuracy cost is real. Learned bottleneck compression is out of scope (training).
+- **One transport, one formula**: the split executor subclasses the remote
+  executor through a payload-preparation hook; stage timing, failure precedence,
+  upload-charged-on-failure, and same-frame fallback all remain the single
+  documented implementation. Head latency (``head_latency_s``) and head energy
+  (the config's ``energy_j_per_call``) are charged on every attempt — a failed
+  upload wastes real onboard work.
+- **Privacy is derived from the kind, never author-declared**: the catalog maps
+  ``simulated_split`` to REMOTE placement with ``transmitted_payload="features"``
+  — legal under ``features_only`` (where raw-RGB offload is a violation),
+  forbidden under ``local_only``. This is the structural reason split exists:
+  measured JPEG sizes made full-frame offload bandwidth-cheap, so split's niche
+  is privacy plus onboard-compute relief, not bytes.
+- **Real cuts are exact**: ``split_models.TorchSplitPartition`` partitions the
+  cached torchvision model at a legal backbone-child boundary (illegal cuts fail
+  loudly, listing the legal set); head+tail execute exactly the full model's
+  operations, so a float32 cut reproduces the full model's mask bit-for-bit
+  (pinned by the opt-in ``real_models`` test). The heuristic partition is a CI
+  fixture only. Onboard-full reduced precision needs no new machinery: the torch
+  kind's existing ``dtype: float16`` is the quantized tier (int8/TensorRT stays
+  out of scope).

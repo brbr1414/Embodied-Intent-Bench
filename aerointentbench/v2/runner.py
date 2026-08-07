@@ -698,27 +698,32 @@ class _PolicyFailure:
 def _catalog_from_specs(scenario: V2Scenario) -> ConfigCatalog:
     """A V1 catalog view of the scenario's executor configs, for validation and policies.
 
-    A ``simulated_remote`` config carries REMOTE placement and explicitly declares that
-    it transmits raw input, so the frozen V1 privacy logic (`privacy_permits`) applies
-    verbatim: forbidden under ``local_only`` and -- because raw is not features -- under
-    ``features_only`` too.
+    The transmitted payload is derived from the KIND, never author-declared, so the
+    frozen V1 privacy logic (`privacy_permits`) applies verbatim with no way to
+    mislabel: a ``simulated_remote`` config carries REMOTE placement and transmits raw
+    input (forbidden under ``local_only`` and ``features_only``); a ``simulated_split``
+    config carries REMOTE placement and transmits features (forbidden under
+    ``local_only``, permitted under ``features_only``); everything else is LOCAL.
     """
+
+    def _strategy(spec: object) -> Strategy:
+        if spec.kind == "simulated_remote":
+            placement = Placement.REMOTE
+            payload = {TRANSMITTED_PAYLOAD_PARAMETER: TransmittedPayload.RAW_INPUT.value}
+        elif spec.kind == "simulated_split":
+            placement = Placement.REMOTE
+            payload = {TRANSMITTED_PAYLOAD_PARAMETER: TransmittedPayload.FEATURES.value}
+        else:
+            placement = Placement.LOCAL
+            payload = {}
+        return Strategy(placement=placement, precision=Precision.FP32, parameters=payload)
+
     return ConfigCatalog(
         [
             Configuration(
                 config_id=spec.config_id,
                 model_id=spec.model_strategy_id,
-                strategy=Strategy(
-                    placement=(
-                        Placement.REMOTE if spec.kind == "simulated_remote" else Placement.LOCAL
-                    ),
-                    precision=Precision.FP32,
-                    parameters=(
-                        {TRANSMITTED_PAYLOAD_PARAMETER: TransmittedPayload.RAW_INPUT.value}
-                        if spec.kind == "simulated_remote"
-                        else {}
-                    ),
-                ),
+                strategy=_strategy(spec),
             )
             for spec in scenario.executor_configs
         ],

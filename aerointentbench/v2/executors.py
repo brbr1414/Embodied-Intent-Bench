@@ -187,8 +187,8 @@ def build_executors(specs: tuple[ExecutorConfigSpec, ...]) -> dict[str, ImageExe
         kinds["torch_semantic_segmentation"] = TorchSemanticSegmentationExecutor
     registry: dict[str, ImageExecutor] = {}
     for spec in specs:
-        if spec.kind == "simulated_remote":
-            continue  # remotes are wired second, so they can reference local fallbacks
+        if spec.kind in ("simulated_remote", "simulated_split"):
+            continue  # offload kinds are wired second, so they can reference local fallbacks
         try:
             registry[spec.config_id] = kinds[spec.kind](spec)
         except KeyError:  # pragma: no cover - schema already validates kinds
@@ -199,6 +199,12 @@ def build_executors(specs: tuple[ExecutorConfigSpec, ...]) -> dict[str, ImageExe
 
         for spec in remote_specs:
             registry[spec.config_id] = build_remote_executor(spec, registry)
+    split_specs = [spec for spec in specs if spec.kind == "simulated_split"]
+    if split_specs:
+        from aerointentbench.v2.split import build_split_executor
+
+        for spec in split_specs:
+            registry[spec.config_id] = build_split_executor(spec, registry)
     return registry
 
 

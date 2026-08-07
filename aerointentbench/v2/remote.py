@@ -386,6 +386,31 @@ _REMOTE_PROVENANCE: Final = {
 }
 
 
+@dataclass(frozen=True, slots=True)
+class PreparedPayload:
+    """What one offload attempt puts on the wire, plus its onboard preparation cost.
+
+    The base remote executor ships the raw frame with no preparation cost beyond the
+    configured codec energy; a subclass (e.g. the split executor) may run real onboard
+    work first and transmit something else. Keeping this a single value object lets
+    ``run_with_context`` stay the one place the transport rules and fallback semantics
+    live — subclasses may only change *what* is sent, never *how* sending behaves.
+    """
+
+    kind: str
+    shape: tuple[int, ...]
+    mb: float
+    #: The in-process payload handed to the transport (a real transport would carry
+    #: serialized bytes referenced by ``payload_ref``).
+    payload: np.ndarray
+    #: Onboard time spent producing the payload, added to the mission latency of every
+    #: outcome (the head work happens before the transport regardless of what follows).
+    onboard_latency_s: float
+    #: Onboard energy spent producing the payload (replaces the base codec constant).
+    onboard_energy_j: float
+    diagnostics: dict[str, Any]
+
+
 class SimulatedRemoteExecutor:
     """The benchmark-facing remote executor: transport + backend + fallback, one result.
 
@@ -411,9 +436,22 @@ class SimulatedRemoteExecutor:
         self._clock = _time.perf_counter
         self._params = {**REMOTE_PARAMETER_DEFAULTS, **dict(spec.parameters)}
 
+    def _prepare_payload(self, rgb: np.ndarray) -> PreparedPayload:
+        """The raw frame at its configured size; subclasses override to send other payloads."""
+        return PreparedPayload(
+            kind="raw_rgb",
+            shape=tuple(rgb.shape),
+            mb=self._spec.communication_mb_per_call,
+            payload=rgb,
+            onboard_latency_s=0.0,
+            onboard_energy_j=float(self._params["onboard_codec_energy_j"]),
+            diagnostics={},
+        )
+
     def run_with_context(self, rgb: np.ndarray, context: ExecutionContext) -> ImageExecutionResult:
         started = self._clock()
         p = self._params
+        prepared = self._prepare_payload(rgb)
         request = InferenceRequest(
             request_id=f"{context.scenario_id}/obs{context.observation_id:06d}",
             scenario_id=context.scenario_id,
@@ -421,14 +459,14 @@ class SimulatedRemoteExecutor:
             capture_time_s=context.capture_time_s,
             deadline_time_s=context.deadline_s,
             requested_config_id=self.config_id,
-            payload_kind="raw_rgb",
-            payload_shape=tuple(rgb.shape),
-            payload_mb=self._spec.communication_mb_per_call,
+            payload_kind=prepared.kind,
+            payload_shape=prepared.shape,
+            payload_mb=prepared.mb,
             privacy_level=str(p.get("privacy_level", "remote_allowed")),
             payload_ref=f"inline:obs{context.observation_id:06d}",
         )
         transport_result = self._transport.execute(
-            request, rgb, context.network, float(p["timeout_s"])
+            request, prepared.payload, context.network, float(p["timeout_s"])
         )
 
         communication_mb = transport_result.uploaded_mb + transport_result.downloaded_mb
@@ -437,10 +475,11 @@ class SimulatedRemoteExecutor:
             + transport_result.downloaded_mb * p["downlink_energy_j_per_mb"]
             + p["radio_activation_j"]  # charged on every attempt, incl. failed probes
         )
-        onboard_energy = p["onboard_codec_energy_j"]
+        onboard_energy = prepared.onboard_energy_j
         diagnostics: dict[str, Any] = {
             "execution_location": "remote",
             "protocol_version": PROTOCOL_VERSION,
+            **prepared.diagnostics,
             "request": request.to_wire(),
             "remote_status": transport_result.status.value,
             "failure_reason": transport_result.failure_reason,
@@ -460,7 +499,7 @@ class SimulatedRemoteExecutor:
                 model_strategy_id=self.model_strategy_id,
                 success=True,
                 prediction_mask=transport_result.prediction_mask,
-                mission_latency_s=transport_result.elapsed_s,
+                mission_latency_s=prepared.onboard_latency_s + transport_result.elapsed_s,
                 measured_wall_clock_s=self._clock() - started,
                 energy_j=onboard_energy,
                 communication_mb=communication_mb,
@@ -483,7 +522,11 @@ class SimulatedRemoteExecutor:
                 success=True,
                 prediction_mask=local.prediction_mask,
                 # Both attempts happened in sequence on the mission clock.
-                mission_latency_s=transport_result.elapsed_s + local.mission_latency_s,
+                mission_latency_s=(
+                    prepared.onboard_latency_s
+                    + transport_result.elapsed_s
+                    + local.mission_latency_s
+                ),
                 measured_wall_clock_s=self._clock() - started,
                 energy_j=onboard_energy + local.energy_j,
                 communication_mb=communication_mb,
@@ -500,7 +543,7 @@ class SimulatedRemoteExecutor:
             model_strategy_id=self.model_strategy_id,
             success=False,
             prediction_mask=np.zeros(rgb.shape[:2], dtype=bool),
-            mission_latency_s=transport_result.elapsed_s,
+            mission_latency_s=prepared.onboard_latency_s + transport_result.elapsed_s,
             measured_wall_clock_s=self._clock() - started,
             energy_j=onboard_energy,
             communication_mb=communication_mb,

@@ -154,18 +154,32 @@ _CONTRACT_FIELDS: Final = (
 #: The executor kinds V2 ships. The two heuristic kinds are the V2.0 test backends; the
 #: torch kind is the V2.1 real-model seam and needs the optional [v2-real-models] extra;
 #: ``simulated_remote`` (V3 P1) is the deployment-boundary remote path — its backend is
-#: one of the other kinds run "server-side".
+#: one of the other kinds run "server-side"; ``simulated_split`` runs the model's head
+#: onboard and ships intermediate features to the simulated server for the tail.
 _EXECUTOR_KINDS: Final = (
     "fast_weak",
     "slow_strong",
     "torch_semantic_segmentation",
     "simulated_remote",
+    "simulated_split",
 )
 
 #: Required entries in ``parameters`` for a simulated_remote executor. Everything else
 #: (encoding/queue/energy coefficients, fallback_config_id, download size, loss ceiling)
 #: has documented defaults in ``aerointentbench.v2.remote.REMOTE_PARAMETER_DEFAULTS``.
 _REMOTE_REQUIRED_PARAMETERS: Final = ("backend_kind", "remote_compute_s", "timeout_s")
+
+#: Required entries in ``parameters`` for a simulated_split executor: the remote set
+#: plus the cut identity and the head's onboard latency (its energy is the config's
+#: ``energy_j_per_call``). ``feature_dtype`` defaults in
+#: ``aerointentbench.v2.split.SPLIT_PARAMETER_DEFAULTS``.
+_SPLIT_REQUIRED_PARAMETERS: Final = (
+    "backend_kind",
+    "split_cut",
+    "head_latency_s",
+    "remote_compute_s",
+    "timeout_s",
+)
 _TRAJECTORY_TYPES: Final = ("polyline", "lawnmower")
 
 #: Required entries in ``parameters`` for a torch_semantic_segmentation executor. Kept in
@@ -590,6 +604,8 @@ def _read_executors(reader: DocumentReader) -> tuple[ExecutorConfigSpec, ...]:
             _validate_torch_parameters(parameters, entry.context)
         if kind == "simulated_remote":
             _validate_remote_parameters(parameters, entry.context)
+        if kind == "simulated_split":
+            _validate_split_parameters(parameters, entry.context)
         executors.append(
             ExecutorConfigSpec(
                 config_id=config_id,
@@ -688,7 +704,9 @@ def _validate_remote_parameters(parameters: Mapping[str, Any], context: str) -> 
             f"{list(_REMOTE_REQUIRED_PARAMETERS)}; missing {missing}"
         )
     backend = parameters["backend_kind"]
-    local_kinds = tuple(k for k in _EXECUTOR_KINDS if k != "simulated_remote")
+    local_kinds = tuple(
+        k for k in _EXECUTOR_KINDS if k not in ("simulated_remote", "simulated_split")
+    )
     if backend not in local_kinds:
         raise SchemaValidationError(
             f"{context}: backend_kind {backend!r} must be one of {list(local_kinds)} "
@@ -700,6 +718,36 @@ def _validate_remote_parameters(parameters: Mapping[str, Any], context: str) -> 
             raise SchemaValidationError(
                 f"{context}: {key} must be a positive number, got {value!r}"
             )
+
+
+def _validate_split_parameters(parameters: Mapping[str, Any], context: str) -> None:
+    """Validate a simulated_split executor's model-strategy parameters at load time."""
+    missing = [key for key in _SPLIT_REQUIRED_PARAMETERS if key not in parameters]
+    if missing:
+        raise SchemaValidationError(
+            f"{context}: a simulated_split executor requires parameters "
+            f"{list(_SPLIT_REQUIRED_PARAMETERS)}; missing {missing}"
+        )
+    backend = parameters["backend_kind"]
+    local_kinds = tuple(
+        k for k in _EXECUTOR_KINDS if k not in ("simulated_remote", "simulated_split")
+    )
+    if backend not in local_kinds:
+        raise SchemaValidationError(
+            f"{context}: split backend_kind {backend!r} must be one of {list(local_kinds)} "
+            "(the split head and tail partition an existing model kind)"
+        )
+    for key in ("head_latency_s", "remote_compute_s", "timeout_s"):
+        value = parameters[key]
+        if not isinstance(value, (int, float)) or isinstance(value, bool) or value <= 0:
+            raise SchemaValidationError(
+                f"{context}: {key} must be a positive number, got {value!r}"
+            )
+    dtype = parameters.get("feature_dtype", "float16")
+    if dtype not in ("float32", "float16", "uint8"):
+        raise SchemaValidationError(
+            f"{context}: feature_dtype {dtype!r} must be one of ['float32', 'float16', 'uint8']"
+        )
 
 
 # --- cross-document checks -------------------------------------------------------------------
