@@ -169,6 +169,7 @@ _EXECUTOR_KINDS: Final = (
     "fast_weak",
     "slow_strong",
     "torch_semantic_segmentation",
+    "torch_instance_segmentation",
     "simulated_remote",
     "simulated_split",
     "pretrained_split",
@@ -651,6 +652,10 @@ def _read_executors(reader: DocumentReader) -> tuple[ExecutorConfigSpec, ...]:
         parameters = entry.get_scalar_mapping("parameters")
         if kind == "torch_semantic_segmentation":
             _validate_torch_parameters(parameters, entry.context)
+        if kind == "torch_instance_segmentation":
+            from aerointentbench.v2.instance_models import validate_instance_parameters
+
+            validate_instance_parameters(parameters, entry.context)
         if kind == "simulated_remote":
             _validate_remote_parameters(parameters, entry.context)
         if kind == "simulated_split":

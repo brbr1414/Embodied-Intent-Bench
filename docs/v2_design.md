@@ -709,3 +709,35 @@ does what split computing promises) but fail quality (recall 0.375 / 0.25 —
 VOC-trained checkpoints on synthetic aerial markers are the documented V2.1
 domain mismatch; the non-zero recall is incidental marker-to-person firing,
 never perception evidence).
+
+### 10.11.1 Second method family and second model family (2026-08-11, same day)
+
+Two catalog expansions, both still literature-fixed splits:
+
+- **`sc2_ghnd_bq`** — the SC2 release's second published method family: the GHND
+  bottleneck (Head Network Distillation, Matsubara et al., IEEE Access 2020;
+  bottleneck architecture from "Neural Compression and Filtering...", 2021) with
+  8-bit bottleneck quantization and NO entropy coding. The v0.0.3 checkpoints
+  predate today's sc2bench module list, so the backend reconstructs the
+  release-era architecture verbatim from the v0.0.3 source (transcription, not
+  design — the checkpoint defines the computation). Measured on the catalog
+  world: 39.6 KB/frame (vs 12.6 KB entropy-coded — the honest cost of skipping
+  the entropy coder), and recall 0.625, the best of the split tiers.
+- **`fcm_maskrcnn_fpn` + `torch_instance_segmentation`** — a second MODEL family
+  (instance segmentation): torchvision Mask R-CNN R50-FPN official COCO weights,
+  deployable full-onboard (new local kind, fake-injectable for CI, person index
+  from weight metadata) or split at the MPEG FCM standard FPN test point
+  (backbone+FPN onboard, P-layer features across, RPN+ROI heads remote). The
+  standard's learned feature codec (FCTM/VVC) is out of scope, so crossing
+  tensors reuse the graph-cut split's per-tensor affine quantization — measured
+  4.19 MB/frame, and the genuine mission fails the communication budget: the
+  payload gap between a standard split point without a learned codec and a
+  paper's supervised compression is a benchmark finding. A float32 FCM split
+  reproduces the onboard model's mask exactly (pinned by the opt-in test).
+
+Not shipped, with reasons recorded: SAM/SAM2 split (promptable segmentation
+needs a prompt policy the mission loop does not define — a design question, not
+a wrapper); Ladon (research repo is not packaged; vendoring research code into
+the benchmark violates dependency hygiene — revisit if it is released as a
+package); int8 onboard (needs TensorRT, banned; fp16 stays the reduced-precision
+tier).

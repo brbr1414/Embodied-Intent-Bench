@@ -233,3 +233,24 @@ moving-target pattern again). No tested policy satisfies this contract — kept
 honestly. Artifacts: `results/v3x_model_catalog/` (local-only). Pending
 empirical work: head latency/energy on the boards, server tail latency, and the
 lab's SAM split curves.
+
+### 6.1 Extension: full catalog results (real checkpoints, catalog world)
+
+| config | recall | battery | failing axes |
+|---|---|---|---|
+| local_strong_fp16 | 1.0 | 0.066 | battery |
+| maskrcnn_onboard_full | 0.375 | 0.000 | battery + quality |
+| presplit_es_b064 | 0.375 | 0.711 | quality |
+| presplit_es_b512 | 0.25 | 0.712 | quality |
+| presplit_ghnd_bq3 | 0.625 | 0.708 | quality |
+| presplit_maskrcnn_fcm | 0.25 | 0.325 | communication + quality |
+| rule_based | 0.875 | 0.166 | battery (floor 0.17) |
+
+Three findings kept honestly: (a) the two published DeepLabV3 method families
+order as expected on rate vs quality (GHND-BQ 39.6 KB / 0.625 vs Entropic
+Student 12.6 KB / 0.375 — more bytes, more recall, across PAPERS not knobs);
+(b) the FCM standard split point without its learned feature codec blows the
+communication budget (4.19 MB/frame) — adopting a standard's split point does
+not import its codec; (c) still no policy satisfies the contract, and all VOC/
+COCO-trained recalls on synthetic markers remain domain-mismatch diagnostics,
+never perception evidence.

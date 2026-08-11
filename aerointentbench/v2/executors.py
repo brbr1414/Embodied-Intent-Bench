@@ -185,6 +185,10 @@ def build_executors(specs: tuple[ExecutorConfigSpec, ...]) -> dict[str, ImageExe
         from aerointentbench.v2.real_models import TorchSemanticSegmentationExecutor
 
         kinds["torch_semantic_segmentation"] = TorchSemanticSegmentationExecutor
+    if any(spec.kind == "torch_instance_segmentation" for spec in specs):
+        from aerointentbench.v2.instance_models import TorchInstanceSegmentationExecutor
+
+        kinds["torch_instance_segmentation"] = TorchInstanceSegmentationExecutor
     registry: dict[str, ImageExecutor] = {}
     for spec in specs:
         if spec.kind in ("simulated_remote", "simulated_split", "pretrained_split"):

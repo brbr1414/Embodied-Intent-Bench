@@ -42,6 +42,7 @@ weights.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -70,7 +71,7 @@ __all__ = [
 #: could describe a split this benchmark discovered itself.
 SPLIT_SOURCES = ("paper", "official_repository")
 
-PRESPLIT_BACKENDS = ("sc2_entropic_student", "fixture")
+PRESPLIT_BACKENDS = ("sc2_entropic_student", "sc2_ghnd_bq", "fcm_maskrcnn_fpn", "fixture")
 
 PRESPLIT_PARAMETER_DEFAULTS = dict(REMOTE_PARAMETER_DEFAULTS)
 
@@ -172,26 +173,39 @@ _SC2_REQUIRED_PARAMETERS = (
 _SC2_MODEL_CACHE: dict[tuple[str, str], Any] = {}
 
 
-class _Sc2EntropicStudentModel:
-    """Entropic Student DeepLabV3-R50 (VOC) behind the :class:`PresplitModel` seam.
+class _Sc2DeepLabV3Model:
+    """A pre-split DeepLabV3-R50 (VOC) from the SC2 benchmark, behind :class:`PresplitModel`.
 
     The checkpoint IS the split: ``backbone.bottleneck_layer.encoder`` (the head
-    the paper trains for the device) plus the entropy coder produce the wire
-    bitstream; ``complete`` entropy-decodes and runs layer2..4 + classifier (the
-    server side). The person class index is resolved from torchvision's VOC-label
-    weight metadata — the same 21-class label set the checkpoint was trained on —
+    the source paper trains for the device) produces the wire payload; ``complete``
+    runs the decoder + layer2..4 + classifier (the server side). Two published
+    method families share this skeleton and differ only in the bottleneck:
+
+    - ``sc2_entropic_student`` — ``FPBasedResNetBottleneck`` (24 channels) with a
+      learned entropy coder; the payload is the entropy-coded bitstream.
+    - ``sc2_ghnd_bq`` — ``larger_resnet_bottleneck`` (Head Network Distillation,
+      Matsubara et al., IEEE Access 2020) with 8-bit bottleneck quantization; the
+      payload is the quantized latent tensor (1 byte/element + one fp32 scale,
+      metadata not priced — same rule as the graph-cut split).
+
+    The person class index is resolved from torchvision's VOC-label weight
+    metadata — the same 21-class label set the checkpoints were trained on —
     never hardcoded.
     """
+
+    #: Subclasses set the bottleneck the checkpoint expects.
+    backend_name: str = ""
 
     def __init__(self, spec: ExecutorConfigSpec) -> None:
         params = dict(spec.parameters)
         missing = [key for key in _SC2_REQUIRED_PARAMETERS if key not in params]
         if missing:
             raise SchemaValidationError(
-                f"config {spec.config_id!r}: sc2_entropic_student requires parameters "
+                f"config {spec.config_id!r}: {self.backend_name} requires parameters "
                 f"{list(_SC2_REQUIRED_PARAMETERS)}; missing {missing}"
             )
         self._spec = spec
+        self._params = params
         self._width = int(params["input_width_px"])
         self._height = int(params["input_height_px"])
         self._device = str(params["device"])
@@ -200,8 +214,20 @@ class _Sc2EntropicStudentModel:
         self._model = self._load(self._checkpoint_path, self._device)
         self._person_index = self._resolve_person_index()
 
-    @staticmethod
-    def _load(checkpoint_path: str, device: str) -> Any:
+    # -- subclass hooks -------------------------------------------------------------------
+
+    def _bottleneck_config(self) -> dict[str, Any]:
+        raise NotImplementedError
+
+    def _pre_load_state(self, model: Any, state: Mapping[str, Any]) -> None:
+        """Shape checkpoint-sized buffers before a strict load. Default: nothing."""
+
+    def _payload_bytes(self, payload: Mapping[str, Any]) -> int:
+        raise NotImplementedError
+
+    # -- shared machinery -----------------------------------------------------------------
+
+    def _load(self, checkpoint_path: str, device: str) -> Any:
         from pathlib import Path
 
         checkpoint_path = str(Path(checkpoint_path).expanduser())
@@ -213,7 +239,7 @@ class _Sc2EntropicStudentModel:
             from sc2bench.models.segmentation.registry import get_segmentation_model
         except ImportError as error:  # pragma: no cover - environment-dependent
             raise SchemaValidationError(
-                "a pretrained_split config with split_backend 'sc2_entropic_student' needs "
+                f"a pretrained_split config with split_backend {self.backend_name!r} needs "
                 "the [v2-presplit] extra (sc2bench + torch); install it or use the replay/"
                 "fixture path"
             ) from error
@@ -234,10 +260,7 @@ class _Sc2EntropicStudentModel:
                     "num_classes": 1000,
                     "pretrained": False,
                     "replace_stride_with_dilation": [False, True, True],
-                    "bottleneck_config": {
-                        "key": "FPBasedResNetBottleneck",
-                        "kwargs": {"num_bottleneck_channels": 24, "num_target_channels": 256},
-                    },
+                    "bottleneck_config": self._bottleneck_config(),
                     "resnet_name": "resnet50",
                     "pre_transform": None,
                     "skips_avgpool": True,
@@ -248,12 +271,7 @@ class _Sc2EntropicStudentModel:
         checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
         has_model_key = isinstance(checkpoint, dict) and "model" in checkpoint
         state = checkpoint["model"] if has_model_key else checkpoint
-        # The entropy coder's CDF tables are sized by the checkpoint; shape the empty
-        # buffers first so a strict load verifies every key.
-        bottleneck = model.backbone.bottleneck_layer.entropy_bottleneck
-        prefix = "backbone.bottleneck_layer.entropy_bottleneck."
-        for name in ("_offset", "_quantized_cdf", "_cdf_length"):
-            setattr(bottleneck, name, torch.empty_like(state[prefix + name]))
+        self._pre_load_state(model, state)
         model.load_state_dict(state, strict=True)
         model.to(device).eval()
         _SC2_MODEL_CACHE[key] = model
@@ -281,13 +299,9 @@ class _Sc2EntropicStudentModel:
         import torch
 
         with torch.no_grad():
-            compressed = self._model.backbone.bottleneck_layer.encode(self._preprocess(rgb))
-        payload_bytes = sum(len(s) for s in compressed["strings"][0])
-        return (
-            compressed,
-            payload_bytes / 1e6,
-            {"payload_bytes": payload_bytes, "latent_shape": list(compressed["shape"])},
-        )
+            payload = self._model.backbone.bottleneck_layer.encode(self._preprocess(rgb))
+        payload_bytes = self._payload_bytes(payload)
+        return payload, payload_bytes / 1e6, {"payload_bytes": payload_bytes}
 
     def complete(self, payload: Any, rgb_shape: tuple[int, ...]) -> np.ndarray:
         import torch
@@ -306,6 +320,115 @@ class _Sc2EntropicStudentModel:
         mask = (classes == self._person_index).astype(np.uint8)
         resized = Image.fromarray(mask * 255).resize((rgb_shape[1], rgb_shape[0]), Image.NEAREST)
         return np.asarray(resized) > 127
+
+
+class _Sc2EntropicStudentModel(_Sc2DeepLabV3Model):
+    backend_name = "sc2_entropic_student"
+
+    def _bottleneck_config(self) -> dict[str, Any]:
+        return {
+            "key": "FPBasedResNetBottleneck",
+            "kwargs": {"num_bottleneck_channels": 24, "num_target_channels": 256},
+        }
+
+    def _pre_load_state(self, model: Any, state: Mapping[str, Any]) -> None:
+        import torch
+
+        # The entropy coder's CDF tables are sized by the checkpoint; shape the empty
+        # buffers first so a strict load verifies every key.
+        bottleneck = model.backbone.bottleneck_layer.entropy_bottleneck
+        prefix = "backbone.bottleneck_layer.entropy_bottleneck."
+        for name in ("_offset", "_quantized_cdf", "_cdf_length"):
+            setattr(bottleneck, name, torch.empty_like(state[prefix + name]))
+
+    def _payload_bytes(self, payload: Mapping[str, Any]) -> int:
+        return sum(len(s) for s in payload["strings"][0])
+
+
+class _Sc2GhndBqModel(_Sc2DeepLabV3Model):
+    """GHND bottleneck + 8-bit bottleneck quantization (``bq``), no entropy coding.
+
+    The v0.0.3 checkpoints were trained with the release-era bottleneck module
+    list, which later sc2bench versions replaced; :func:`_register_v003_bottleneck`
+    reconstructs that architecture verbatim from the sc2-benchmark v0.0.3 source
+    (its origin paper: Matsubara et al., "Neural Compression and Filtering for
+    Edge-assisted Real-time Object Detection in Challenged Networks", 2021) so the
+    released weights load strictly. Reconstruction is transcription, not design —
+    the checkpoint defines the computation.
+    """
+
+    backend_name = "sc2_ghnd_bq"
+    _V003_LAYER_KEY = "aerointentbench_ghnd_bq_v003_bottleneck"
+
+    def _bottleneck_config(self) -> dict[str, Any]:
+        channels = int(self._params.get("bottleneck_channels", 3))
+        if channels not in (1, 2, 3, 6, 9, 12):
+            raise SchemaValidationError(
+                f"config {self._spec.config_id!r}: bottleneck_channels {channels} must match a "
+                "released GHND-BQ checkpoint (1, 2, 3, 6, 9 or 12)"
+            )
+        self._register_v003_bottleneck()
+        return {
+            "key": self._V003_LAYER_KEY,
+            "kwargs": {"bottleneck_channel": channels},
+        }
+
+    @classmethod
+    def _register_v003_bottleneck(cls) -> None:
+        try:
+            from sc2bench.models.layer import LAYER_FUNC_DICT, SimpleBottleneck
+            from sc2bench.transforms.misc import SimpleDequantizer, SimpleQuantizer
+            from torch import nn
+        except ImportError as error:  # pragma: no cover - environment-dependent
+            raise SchemaValidationError(
+                "split_backend 'sc2_ghnd_bq' needs the [v2-presplit] extra"
+            ) from error
+
+        if cls._V003_LAYER_KEY in LAYER_FUNC_DICT:
+            return
+
+        def v003_bottleneck(bottleneck_channel: int = 3) -> Any:
+            # Verbatim module list from sc2-benchmark v0.0.3 larger_resnet_bottleneck
+            # (bottleneck_idx=12, output_channel=256, 8-bit quantizer transforms).
+            modules = [
+                nn.Conv2d(3, 64, kernel_size=7, stride=2, padding=3, bias=False),
+                nn.BatchNorm2d(64),
+                nn.ReLU(inplace=True),
+                nn.MaxPool2d(kernel_size=3, stride=2, padding=1),
+                nn.Conv2d(64, 64, kernel_size=2, padding=1, bias=False),
+                nn.BatchNorm2d(64),
+                nn.Conv2d(64, 256, kernel_size=2, padding=1, bias=False),
+                nn.BatchNorm2d(256),
+                nn.ReLU(inplace=True),
+                nn.Conv2d(256, 64, kernel_size=2, padding=1, bias=False),
+                nn.BatchNorm2d(64),
+                nn.Conv2d(64, bottleneck_channel, kernel_size=2, padding=1, bias=False),
+                nn.BatchNorm2d(bottleneck_channel),
+                nn.ReLU(inplace=True),
+                nn.Conv2d(bottleneck_channel, 64, kernel_size=2, bias=False),
+                nn.BatchNorm2d(64),
+                nn.Conv2d(64, 128, kernel_size=2, bias=False),
+                nn.BatchNorm2d(128),
+                nn.ReLU(inplace=True),
+                nn.Conv2d(128, 256, kernel_size=2, bias=False),
+                nn.BatchNorm2d(256),
+                nn.Conv2d(256, 256, kernel_size=2, bias=False),
+                nn.BatchNorm2d(256),
+                nn.ReLU(inplace=True),
+            ]
+            return SimpleBottleneck(
+                nn.Sequential(*modules[:12]),
+                nn.Sequential(*modules[12:]),
+                SimpleQuantizer(num_bits=8),
+                SimpleDequantizer(num_bits=8),
+            )
+
+        LAYER_FUNC_DICT[cls._V003_LAYER_KEY] = v003_bottleneck
+
+    def _payload_bytes(self, payload: Mapping[str, Any]) -> int:
+        z = payload["z"]
+        quantized = getattr(z, "tensor", z)  # QuantizedTensor(tensor, scale, zero_point)
+        return int(quantized.numel())  # 8-bit: one byte per element; scale not priced
 
 
 class _PresplitTailBackend:
@@ -401,6 +524,12 @@ def build_presplit_executor(
     model: PresplitModel
     if backend == "sc2_entropic_student":
         model = _Sc2EntropicStudentModel(spec)
+    elif backend == "sc2_ghnd_bq":
+        model = _Sc2GhndBqModel(spec)
+    elif backend == "fcm_maskrcnn_fpn":
+        from aerointentbench.v2.instance_models import FcmMaskRcnnSplitModel
+
+        model = FcmMaskRcnnSplitModel(spec)
     elif backend == "fixture":
         from aerointentbench.v2.executors import build_executors
         from aerointentbench.v2.scenario import ExecutorConfigSpec as Spec

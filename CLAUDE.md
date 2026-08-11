@@ -237,6 +237,14 @@ kind (features → legal under features_only). Demo
 `demo_img1_model_catalog.json`: presplit missions hold battery 0.71 but fail
 quality (VOC-on-markers domain mismatch, recall 0.375/0.25 — incidental firing,
 never perception evidence); no tested policy satisfies the contract (kept).
+Same-day extension (§10.11.1): `sc2_ghnd_bq` (SC2's second published method
+family; v0.0.3-era bottleneck reconstructed verbatim; 39.6 KB / recall 0.625 —
+more bytes more recall, across papers not knobs) and a second MODEL family —
+Mask R-CNN R50-FPN as `torch_instance_segmentation` (onboard, fake-injectable)
++ `fcm_maskrcnn_fpn` split at the MPEG FCM standard FPN point (uint8 features
+4.19 MB/frame → blows the comm budget: a standard's split point does not import
+its codec; fp32 split == onboard mask, pinned). SAM2 (needs a prompt policy)
+and Ladon (unpackaged research repo) excluded with reasons documented.
 
 **V3 P4 real-data pilot** (`experiments/real_segmentation_pilot/uavid.py`,
 `torchvision_models.py`, `uavid_pilot.py`, `docs/v3_design.md` §P4): UAVid (real

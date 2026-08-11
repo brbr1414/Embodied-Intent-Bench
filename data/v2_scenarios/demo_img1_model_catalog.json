@@ -410,6 +410,78 @@
         "downlink_energy_j_per_mb": 1.0,
         "radio_activation_j": 0.5
       }
+    },
+    {
+      "config_id": "presplit_ghnd_bq3",
+      "model_strategy_id": "GHND_BQ3_DLV3_R50",
+      "kind": "pretrained_split",
+      "mission_latency_s": 0.4,
+      "energy_j_per_call": 8.0,
+      "communication_mb_per_call": 0.0396,
+      "quality_tier": "medium",
+      "parameters": {
+        "split_backend": "sc2_ghnd_bq",
+        "split_source": "paper",
+        "split_source_reference": "Matsubara et al., 'Head Network Distillation: Splitting Distilled Deep Neural Networks for Resource-constrained Edge Computing Systems', IEEE Access 2020; bottleneck architecture: Matsubara & Levorato, 'Neural Compression and Filtering for Edge-assisted Real-time Object Detection in Challenged Networks', 2021; checkpoints: github.com/yoshitomo-matsubara/sc2-benchmark release v0.0.3, MIT",
+        "split_location": "GHND bottleneck replaces ResNet-50 conv1..layer1; encoder (head) onboard, 8-bit bottleneck-quantized 3-channel latent on the wire (no entropy coding), decoder + layer2..4 + DeepLabV3 head on the server",
+        "checkpoint_path": "~/.cache/sc2-benchmark/resource/ckpt/pascal_voc2012/supervised_compression/ghnd-bq/pascal_voc2012-deeplabv3_resnet50-bq3ch_from_deeplabv3_resnet50.pt",
+        "bottleneck_channels": 3,
+        "input_width_px": 512,
+        "input_height_px": 384,
+        "device": "cpu",
+        "head_latency_s": 0.05,
+        "remote_compute_s": 0.2,
+        "timeout_s": 3.0,
+        "fallback_config_id": "local_light_fp32",
+        "download_mb_per_call": 0.03,
+        "uplink_energy_j_per_mb": 60.0,
+        "downlink_energy_j_per_mb": 1.0,
+        "radio_activation_j": 0.5
+      }
+    },
+    {
+      "config_id": "maskrcnn_onboard_full",
+      "model_strategy_id": "MASKRCNN_R50_FPN",
+      "kind": "torch_instance_segmentation",
+      "mission_latency_s": 1.8,
+      "energy_j_per_call": 800.0,
+      "communication_mb_per_call": 0.0,
+      "quality_tier": "high",
+      "parameters": {
+        "score_threshold": 0.5,
+        "input_min_size_px": 384,
+        "input_max_size_px": 512,
+        "device": "cpu",
+        "latency_mode": "configured"
+      }
+    },
+    {
+      "config_id": "presplit_maskrcnn_fcm",
+      "model_strategy_id": "MASKRCNN_R50_FPN_FCM_SPLIT",
+      "kind": "pretrained_split",
+      "mission_latency_s": 0.8,
+      "energy_j_per_call": 400.0,
+      "communication_mb_per_call": 4.19,
+      "quality_tier": "high",
+      "parameters": {
+        "split_backend": "fcm_maskrcnn_fpn",
+        "split_source": "paper",
+        "split_source_reference": "MPEG FCM (Feature Coding for Machines) split-inference test point for R-CNN models, implemented by CompressAI-Vision (InterDigital), arXiv:2509.20777; weights: torchvision maskrcnn_resnet50_fpn official DEFAULT (COCO)",
+        "split_location": "split at the FPN outputs: backbone+FPN (head) onboard, multi-scale P-layer feature tensors on the wire, RPN + ROI heads on the server. Feature reduction here is per-tensor uint8 affine (the standard's FCTM/VVC feature codec is out of scope) -- the payload gap vs a trained bottleneck is a finding, not a defect",
+        "score_threshold": 0.5,
+        "input_min_size_px": 384,
+        "input_max_size_px": 512,
+        "device": "cpu",
+        "feature_dtype": "uint8",
+        "head_latency_s": 0.8,
+        "remote_compute_s": 0.3,
+        "timeout_s": 3.0,
+        "fallback_config_id": "local_light_fp32",
+        "download_mb_per_call": 0.03,
+        "uplink_energy_j_per_mb": 60.0,
+        "downlink_energy_j_per_mb": 1.0,
+        "radio_activation_j": 0.5
+      }
     }
   ],
   "mission_contract": {
@@ -426,7 +498,7 @@
     "label": "synthetic deployment-matrix mission diagnostic (features_only privacy)",
     "assets": "OpenAI-generated synthetic humans (owner-supplied); NOT real people, NOT real aerial data",
     "note": "results are integration/observability diagnostics, never real UAV, radio, or Jetson performance",
-    "design": "model catalog: model_family x execution_mode, policy selects one config_id. Family deeplabv3_resnet50: onboard fp32, onboard fp16 (reduced precision via the torch kind's dtype knob; int8 needs TensorRT and stays out of scope), raw-RGB full offload (deliberately privacy-forbidden under this features_only contract), and TWO predefined-split tiers (pretrained_split kind): Entropic Student DeepLabV3-R50 beta 0.64 / 5.12 from the SC2 benchmark -- the split point is the SOURCE PAPER'S, adopted as a fixed catalog option, never searched or tuned here (provenance embedded per config). Family lraspp_mobilenet_v3_large: onboard fp32 / fp16 only -- no published split configuration for this architecture was found, and inventing one is forbidden, so the family honestly lacks a split tier. Wire payloads for pretrained_split are priced from the entropy-coded bitstream the head actually produces per frame (communication_mb_per_call is the nominal documentation value, measured on this world's frames at 512x384 input on CPU); head_latency_s, energy_j_per_call (head), and remote_compute_s are CONFIGURED mission-scale placeholders PENDING board measurement (the sc2 encoder is ~0.14M params). The checkpoints are local-only (gitignored cache), like the model-zoo weights. VOC-trained checkpoints on synthetic aerial markers are a documented domain mismatch (as in V2.1): this scenario exercises the catalog/accounting/privacy semantics, not attainable perception quality."
+    "design": "model catalog: model_family x execution_mode, policy selects one config_id. Family deeplabv3_resnet50: onboard fp32, onboard fp16 (reduced precision via the torch kind's dtype knob; int8 needs TensorRT and stays out of scope), raw-RGB full offload (deliberately privacy-forbidden under this features_only contract), and TWO predefined-split tiers (pretrained_split kind): Entropic Student DeepLabV3-R50 beta 0.64 / 5.12 from the SC2 benchmark -- the split point is the SOURCE PAPER'S, adopted as a fixed catalog option, never searched or tuned here (provenance embedded per config). Family lraspp_mobilenet_v3_large: onboard fp32 / fp16 only -- no published split configuration for this architecture was found, and inventing one is forbidden, so the family honestly lacks a split tier. Wire payloads for pretrained_split are priced from the entropy-coded bitstream the head actually produces per frame (communication_mb_per_call is the nominal documentation value, measured on this world's frames at 512x384 input on CPU); head_latency_s, energy_j_per_call (head), and remote_compute_s are CONFIGURED mission-scale placeholders PENDING board measurement (the sc2 encoder is ~0.14M params). The checkpoints are local-only (gitignored cache), like the model-zoo weights. VOC-trained checkpoints on synthetic aerial markers are a documented domain mismatch (as in V2.1): this scenario exercises the catalog/accounting/privacy semantics, not attainable perception quality. EXTENDED 2026-08-11: three more catalog rows. presplit_ghnd_bq3 = the SC2 release's second published method family (GHND bottleneck + 8-bit quantization, no entropy coding; measured 39.6 KB on this world's frames -- vs 12.6 KB entropic-coded, the honest cost of skipping the entropy coder). maskrcnn_onboard_full + presplit_maskrcnn_fcm = a second MODEL FAMILY (instance segmentation, torchvision official COCO weights): full onboard, and split at the MPEG FCM standard FPN test point (uint8-reduced features measured 4.19 MB -- the standard's learned feature codec is out of scope, and the resulting payload gap vs trained bottlenecks is a finding). A float32 FCM split reproduces the onboard model's mask exactly (pinned by the opt-in real-model test). Mask R-CNN costs are configured mission-scale placeholders pending board measurement, like the other rows."
   },
   "evaluation_purpose": "controlled_observability",
   "assets_manifest": "data/v2_assets/manifest.json"
