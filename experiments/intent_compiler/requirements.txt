@@ -1,0 +1,6 @@
+# Optional dependencies for RUNNING the intent compiler, OUTSIDE the benchmark core.
+# The benchmark package (aerointentbench) requires NONE of these; the compiler is a
+# ground-station preprocessing step whose ARTIFACT (a validated contract JSON) is the
+# only thing a benchmark run ever consumes.
+torch>=2.2
+transformers>=4.44

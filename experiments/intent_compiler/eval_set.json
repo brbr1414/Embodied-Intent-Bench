@@ -1,0 +1,120 @@
+{
+  "eval_set_version": "1.0",
+  "description": "Hand-written paired intents for the intent-compiler prototype. Each case gives the intent text, the reference value per contract knob (exact number, enum string, or [lo, hi] band for deliberately vague phrasing), and which fields the intent explicitly states. Fields not in 'stated' must be compiled to the documented defaults AND appear in the compiler's assumptions list. References are authored with the case, before any compiler ran; they must never be edited to make a compiler score better.",
+  "defaults": {
+    "quality_threshold": 0.7,
+    "deadline_s": 900,
+    "communication_budget_mb": 400,
+    "min_final_battery_frac": 0.2,
+    "privacy_level": "features_only"
+  },
+  "cases": [
+    {
+      "case_id": "en_full_explicit",
+      "intent": "Search the field for missing hikers. You have 15 minutes. Keep at least 25% battery for the flight home. Total data budget is 50 MB. No raw video may leave the aircraft, but derived detections are fine to send. I need at least 80% of them found.",
+      "reference": {
+        "quality_threshold": 0.8,
+        "deadline_s": 900,
+        "communication_budget_mb": 50,
+        "min_final_battery_frac": 0.25,
+        "privacy_level": "features_only"
+      },
+      "stated": ["quality_threshold", "deadline_s", "communication_budget_mb", "min_final_battery_frac", "privacy_level"]
+    },
+    {
+      "case_id": "ko_full_explicit",
+      "intent": "사람 수색 임무야. 20분 안에 끝내. 배터리는 3할 남겨놔야 해. 통신은 총 100메가까지만 써. 원본 영상 전송은 금지지만 특징값 전송은 괜찮아. 최소 90%는 찾아야 해.",
+      "reference": {
+        "quality_threshold": 0.9,
+        "deadline_s": 1200,
+        "communication_budget_mb": 100,
+        "min_final_battery_frac": 0.3,
+        "privacy_level": "features_only"
+      },
+      "stated": ["quality_threshold", "deadline_s", "communication_budget_mb", "min_final_battery_frac", "privacy_level"]
+    },
+    {
+      "case_id": "ko_local_only",
+      "intent": "여긴 통신 보안구역이라 어떤 데이터도 기체 밖으로 내보내면 안 돼. 한 시간 안에 구역을 훑어봐.",
+      "reference": {
+        "deadline_s": 3600,
+        "privacy_level": "local_only"
+      },
+      "stated": ["deadline_s", "privacy_level"]
+    },
+    {
+      "case_id": "en_remote_allowed",
+      "intent": "Bandwidth is plentiful out here and the ops server should do the heavy lifting on imagery. Give me a 10 minute sweep of the area.",
+      "reference": {
+        "deadline_s": 600,
+        "privacy_level": "remote_allowed"
+      },
+      "stated": ["deadline_s", "privacy_level"]
+    },
+    {
+      "case_id": "ko_vague_find_all",
+      "intent": "실종자는 반드시 전부 찾아야 해. 시간은 45분 준다.",
+      "reference": {
+        "quality_threshold": [0.85, 0.95],
+        "deadline_s": 2700
+      },
+      "stated": ["quality_threshold", "deadline_s"]
+    },
+    {
+      "case_id": "en_quick_look",
+      "intent": "Just a quick look around the perimeter, five minutes, nothing fancy.",
+      "reference": {
+        "quality_threshold": [0.4, 0.6],
+        "deadline_s": 300
+      },
+      "stated": ["quality_threshold", "deadline_s"]
+    },
+    {
+      "case_id": "ko_battery_only",
+      "intent": "복귀 여유가 필요하니까 배터리 절반은 꼭 남겨둬. 수색은 평소대로.",
+      "reference": {
+        "min_final_battery_frac": 0.5
+      },
+      "stated": ["min_final_battery_frac"]
+    },
+    {
+      "case_id": "en_comm_cap",
+      "intent": "The satellite link is metered this month - stay under 20 megabytes of total link usage for the search.",
+      "reference": {
+        "communication_budget_mb": 20
+      },
+      "stated": ["communication_budget_mb"]
+    },
+    {
+      "case_id": "en_hour_and_half",
+      "intent": "Sweep the valley for the missing person and wrap up within an hour and a half.",
+      "reference": {
+        "deadline_s": 5400
+      },
+      "stated": ["deadline_s"]
+    },
+    {
+      "case_id": "ko_nothing_stated",
+      "intent": "그냥 평소처럼 수색 한 번 돌아줘.",
+      "reference": {},
+      "stated": []
+    },
+    {
+      "case_id": "en_battery_percent",
+      "intent": "Find whoever is out there. Land with no less than 15 percent left in the pack.",
+      "reference": {
+        "min_final_battery_frac": 0.15
+      },
+      "stated": ["min_final_battery_frac"]
+    },
+    {
+      "case_id": "ko_detections_only",
+      "intent": "탐지 결과만 관제 센터로 올리고 영상 자체는 절대 올리지 마. 40분 안에 끝내자.",
+      "reference": {
+        "deadline_s": 2400,
+        "privacy_level": "features_only"
+      },
+      "stated": ["deadline_s", "privacy_level"]
+    }
+  ]
+}
