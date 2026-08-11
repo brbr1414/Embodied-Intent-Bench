@@ -187,7 +187,7 @@ def build_executors(specs: tuple[ExecutorConfigSpec, ...]) -> dict[str, ImageExe
         kinds["torch_semantic_segmentation"] = TorchSemanticSegmentationExecutor
     registry: dict[str, ImageExecutor] = {}
     for spec in specs:
-        if spec.kind in ("simulated_remote", "simulated_split"):
+        if spec.kind in ("simulated_remote", "simulated_split", "pretrained_split"):
             continue  # offload kinds are wired second, so they can reference local fallbacks
         try:
             registry[spec.config_id] = kinds[spec.kind](spec)
@@ -205,6 +205,12 @@ def build_executors(specs: tuple[ExecutorConfigSpec, ...]) -> dict[str, ImageExe
 
         for spec in split_specs:
             registry[spec.config_id] = build_split_executor(spec, registry)
+    presplit_specs = [spec for spec in specs if spec.kind == "pretrained_split"]
+    if presplit_specs:
+        from aerointentbench.v2.presplit import build_presplit_executor
+
+        for spec in presplit_specs:
+            registry[spec.config_id] = build_presplit_executor(spec, registry)
     return registry
 
 

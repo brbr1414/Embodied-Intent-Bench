@@ -218,6 +218,26 @@ family's late-window timing is co-designed with rule_based's escalation, and
 re-tuning either side to flip rows is forbidden. The spectrum (static → reactive →
 scored → committed, bounded by the skyline) is the deliverable.
 
+**V3x model catalog — predefined split** (`aerointentbench/v2/presplit.py`,
+`docs/v2_design.md` §10.11, `docs/v3x_extensions.md` §6): the catalog a policy
+selects from is `model_family × execution_mode` (onboard fp32 / onboard fp16 /
+raw remote / predefined split); the policy's action stays one `config_id`. The
+`pretrained_split` kind runs models **published already split** by prior research
+(SC2 benchmark Entropic Student DeepLabV3-R50; `[v2-presplit]` extra, lazy
+import, MIT checkpoints in a local-only cache). Hard rules: **the split point is
+a citation, never a search result** — split-point profiling/optimization/RL and
+split-aware retraining are out of scope; every config carries a mandatory
+`SplitSpec` (`split_source` paper/official_repository + citable reference +
+location; no "found by this benchmark" value exists); a family with no published
+split honestly lacks the tier (LRASPP); int8 stays out of scope (TensorRT), fp16
+is the reduced-precision tier. Payloads are priced from the entropy-coded bytes
+the head actually produced (12.6/1.1 KB at β0.64/5.12 vs 3.5 MB naive graph cut);
+head latency/energy configured PENDING board measurement; privacy derives from
+kind (features → legal under features_only). Demo
+`demo_img1_model_catalog.json`: presplit missions hold battery 0.71 but fail
+quality (VOC-on-markers domain mismatch, recall 0.375/0.25 — incidental firing,
+never perception evidence); no tested policy satisfies the contract (kept).
+
 **V3 P4 real-data pilot** (`experiments/real_segmentation_pilot/uavid.py`,
 `torchvision_models.py`, `uavid_pilot.py`, `docs/v3_design.md` §P4): UAVid (real
 oblique UAV imagery, CC BY-NC-SA, local-only — NEVER committed) ran through the

@@ -653,3 +653,59 @@ Two consequences the stream makes explicit rather than hiding:
 The three downlink layers compose: **stream** (what the drone sees, ambient,
 remote_allowed only) / **status telemetry** (that the drone is alive, tiny,
 always) / **evidence** (what the drone found, event-driven, prediction-derived).
+
+## 10.11 Model catalog: predefined split as a fixed action (2026-08-11)
+
+The catalog a policy selects from is `model_family x execution_mode`: the same
+architecture may appear as full onboard (torch kind, fp32), reduced-precision
+onboard (the torch kind's `dtype: float16`; int8 needs TensorRT and stays out of
+scope), full raw-RGB offload (`simulated_remote`), or a split deployment. The
+policy's action stays exactly one `config_id` — execution mode is a property of
+the catalog entry, never something the policy composes at runtime.
+
+The `pretrained_split` executor kind (`aerointentbench/v2/presplit.py`) adds
+splits **published by prior research**: an onboard head (encoder) and a server
+tail trained together by a split-computing paper and distributed as pre-trained
+checkpoints. Semantics (pinned by `tests/test_v2_presplit.py`):
+
+- **The split point is a citation, not a search result.** This benchmark's
+  research question is configuration *selection*, not split-point discovery, so
+  layer-wise profiling, split search/optimization, and split-aware retraining are
+  all out of scope. Every `pretrained_split` config carries a mandatory
+  `SplitSpec` — `split_source` (`paper` / `official_repository`; there is
+  deliberately no value meaning "found by this benchmark"), a citable
+  `split_source_reference`, and the `split_location` in the source's own terms —
+  and a config without provenance fails at scenario load.
+- **One transport.** The executor subclasses the remote executor through the same
+  `PreparedPayload` hook as the graph-cut split: stage timing, failure
+  precedence, upload-charged-on-failure, and same-frame fallback remain the
+  single documented implementation. Head latency (configured, pending board
+  measurement) and head energy (`energy_j_per_call`) are charged on every
+  attempt.
+- **Payload honesty.** The wire size is the byte length the head actually encodes
+  for this frame — for the sc2 backend, the entropy-coded bitstream — never a
+  configured constant.
+- **Privacy is derived from the kind**: REMOTE placement with
+  `transmitted_payload="features"` — legal under `features_only`, forbidden under
+  `local_only`, via the frozen V1 privacy logic.
+- The genuine backend (`sc2_entropic_student`) consumes SC2-benchmark checkpoints
+  (Entropic Student DeepLabV3-R50, VOC; MIT license; local-only cache like the
+  model-zoo weights) behind the `[v2-presplit]` extra, lazily imported; the
+  default suite uses a labelled fixture and downloads nothing. Training or
+  fine-tuning bottlenecks ourselves stays banned — published checkpoints are
+  consumed exactly like torchvision weights.
+
+Demo: `data/v2_scenarios/demo_img1_model_catalog.json` — the deployment-matrix
+mission re-expressed as a catalog: deeplabv3_resnet50 x {onboard fp32, onboard
+fp16, raw remote (privacy-blocked under the features_only contract), predefined
+split beta 0.64 / 5.12}, lraspp x {onboard fp32, fp16} (no published split for
+LRASPP was found; inventing one is forbidden, so the family honestly lacks the
+tier). Measured on this world's frames at 512x384 input: entropy-coded payloads
+12.6 KB (beta 0.64) / 1.1 KB (beta 5.12) — versus 3.5 MB for the naive uint8
+graph cut of the same architecture (§10.8), the concrete argument for adopting
+published splits instead of cutting graphs ourselves. Verified with genuine
+checkpoints: both presplit missions complete with battery 0.71 (the tiny head
+does what split computing promises) but fail quality (recall 0.375 / 0.25 —
+VOC-trained checkpoints on synthetic aerial markers are the documented V2.1
+domain mismatch; the non-zero recall is incidental marker-to-person firing,
+never perception evidence).

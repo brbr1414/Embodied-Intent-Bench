@@ -97,7 +97,8 @@ def test_v2_subpackage_only_uses_its_declared_extras() -> None:
     # numpy/PIL/rasterio are the [v2] extras; torch/torchvision are the [v2-real-models]
     # extras, imported lazily inside the real-model backend only (the module imports
     # them function-level, so importing aerointentbench.v2.real_models without them
-    # still works until a torch executor is actually constructed).
+    # still works until a torch executor is actually constructed); sc2bench is the
+    # [v2-presplit] extra, imported lazily inside the sc2 backend only.
     allowed = sys.stdlib_module_names | {
         "aerointentbench",
         "numpy",
@@ -105,6 +106,7 @@ def test_v2_subpackage_only_uses_its_declared_extras() -> None:
         "rasterio",
         "torch",
         "torchvision",
+        "sc2bench",
     }
     for module_path in modules:
         for root in _imported_root_modules(module_path.read_text(encoding="utf-8")):

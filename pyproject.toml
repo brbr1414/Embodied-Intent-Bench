@@ -34,6 +34,9 @@ v2 = ["numpy>=2.0", "pillow>=10.0", "rasterio>=1.4"]
 # never imported unless a torch_semantic_segmentation executor is actually requested;
 # the default install and the default test suite need none of this.
 v2-real-models = ["torch>=2.2", "torchvision>=0.17"]
+# Pre-split models published by prior split-computing research (V3x model catalog).
+# Only the sc2_entropic_student backend needs this; the default suite uses fixtures.
+v2-presplit = ["torch>=2.2", "torchvision>=0.17", "sc2bench>=0.1.1"]
 
 [project.scripts]
 aerointentbench = "aerointentbench.run_benchmark:main"

@@ -22,8 +22,11 @@ already documents.
 
 The real torch partition lives in :mod:`aerointentbench.v2.split_models` (optional
 ``[v2-real-models]`` extra); the heuristic partition here is a CI test fixture, never
-performance evidence. Learned feature compression (bottleneck autoencoders) is
-explicitly out of scope — it requires training pipelines this benchmark bans.
+performance evidence. TRAINING learned feature compression remains out of scope
+(no training pipelines in this benchmark); consuming bottlenecks *published as
+pre-trained checkpoints by prior research* is the separate ``pretrained_split``
+kind (:mod:`aerointentbench.v2.presplit`), where the split point is a cited
+catalog property, never something this benchmark searched for.
 """
 
 from __future__ import annotations

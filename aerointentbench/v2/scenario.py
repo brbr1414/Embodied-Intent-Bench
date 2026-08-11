@@ -162,14 +162,21 @@ _CONTRACT_FIELDS: Final = (
 #: torch kind is the V2.1 real-model seam and needs the optional [v2-real-models] extra;
 #: ``simulated_remote`` (V3 P1) is the deployment-boundary remote path — its backend is
 #: one of the other kinds run "server-side"; ``simulated_split`` runs the model's head
-#: onboard and ships intermediate features to the simulated server for the tail.
+#: onboard and ships intermediate features to the simulated server for the tail;
+#: ``pretrained_split`` runs a model published already split by prior research
+#: (mandatory literature provenance — see ``aerointentbench.v2.presplit``).
 _EXECUTOR_KINDS: Final = (
     "fast_weak",
     "slow_strong",
     "torch_semantic_segmentation",
     "simulated_remote",
     "simulated_split",
+    "pretrained_split",
 )
+
+#: The kinds that offload work across the simulated link. Everything else is onboard;
+#: offload kinds may not serve as another offload config's backend.
+_OFFLOAD_KINDS: Final = ("simulated_remote", "simulated_split", "pretrained_split")
 
 #: Required entries in ``parameters`` for a simulated_remote executor. Everything else
 #: (encoding/queue/energy coefficients, fallback_config_id, download size, loss ceiling)
@@ -183,6 +190,20 @@ _REMOTE_REQUIRED_PARAMETERS: Final = ("backend_kind", "remote_compute_s", "timeo
 _SPLIT_REQUIRED_PARAMETERS: Final = (
     "backend_kind",
     "split_cut",
+    "head_latency_s",
+    "remote_compute_s",
+    "timeout_s",
+)
+
+#: Required entries in ``parameters`` for a pretrained_split executor: the shared
+#: offload timings plus the backend selector and the MANDATORY split provenance —
+#: a predefined split must be citable, never discovered by this benchmark
+#: (``aerointentbench.v2.presplit.SplitSpec``).
+_PRESPLIT_REQUIRED_PARAMETERS: Final = (
+    "split_backend",
+    "split_source",
+    "split_source_reference",
+    "split_location",
     "head_latency_s",
     "remote_compute_s",
     "timeout_s",
@@ -634,6 +655,8 @@ def _read_executors(reader: DocumentReader) -> tuple[ExecutorConfigSpec, ...]:
             _validate_remote_parameters(parameters, entry.context)
         if kind == "simulated_split":
             _validate_split_parameters(parameters, entry.context)
+        if kind == "pretrained_split":
+            _validate_presplit_parameters(parameters, entry.context)
         executors.append(
             ExecutorConfigSpec(
                 config_id=config_id,
@@ -732,9 +755,7 @@ def _validate_remote_parameters(parameters: Mapping[str, Any], context: str) -> 
             f"{list(_REMOTE_REQUIRED_PARAMETERS)}; missing {missing}"
         )
     backend = parameters["backend_kind"]
-    local_kinds = tuple(
-        k for k in _EXECUTOR_KINDS if k not in ("simulated_remote", "simulated_split")
-    )
+    local_kinds = tuple(k for k in _EXECUTOR_KINDS if k not in _OFFLOAD_KINDS)
     if backend not in local_kinds:
         raise SchemaValidationError(
             f"{context}: backend_kind {backend!r} must be one of {list(local_kinds)} "
@@ -757,25 +778,63 @@ def _validate_split_parameters(parameters: Mapping[str, Any], context: str) -> N
             f"{list(_SPLIT_REQUIRED_PARAMETERS)}; missing {missing}"
         )
     backend = parameters["backend_kind"]
-    local_kinds = tuple(
-        k for k in _EXECUTOR_KINDS if k not in ("simulated_remote", "simulated_split")
-    )
+    local_kinds = tuple(k for k in _EXECUTOR_KINDS if k not in _OFFLOAD_KINDS)
     if backend not in local_kinds:
         raise SchemaValidationError(
             f"{context}: split backend_kind {backend!r} must be one of {list(local_kinds)} "
             "(the split head and tail partition an existing model kind)"
         )
+    _validate_positive_timings(parameters, context)
+    dtype = parameters.get("feature_dtype", "float16")
+    if dtype not in ("float32", "float16", "uint8"):
+        raise SchemaValidationError(
+            f"{context}: feature_dtype {dtype!r} must be one of ['float32', 'float16', 'uint8']"
+        )
+
+
+def _validate_positive_timings(parameters: Mapping[str, Any], context: str) -> None:
     for key in ("head_latency_s", "remote_compute_s", "timeout_s"):
         value = parameters[key]
         if not isinstance(value, (int, float)) or isinstance(value, bool) or value <= 0:
             raise SchemaValidationError(
                 f"{context}: {key} must be a positive number, got {value!r}"
             )
-    dtype = parameters.get("feature_dtype", "float16")
-    if dtype not in ("float32", "float16", "uint8"):
+
+
+def _validate_presplit_parameters(parameters: Mapping[str, Any], context: str) -> None:
+    """Validate a pretrained_split executor's model-strategy parameters at load time.
+
+    Provenance is part of the schema: a predefined split without a citable source
+    is rejected here, before anything runs. Backend-specific requirements (e.g.
+    the sc2 checkpoint path) are validated by the backend at build time, mirroring
+    the torch kind.
+    """
+    missing = [key for key in _PRESPLIT_REQUIRED_PARAMETERS if key not in parameters]
+    if missing:
         raise SchemaValidationError(
-            f"{context}: feature_dtype {dtype!r} must be one of ['float32', 'float16', 'uint8']"
+            f"{context}: a pretrained_split executor requires parameters "
+            f"{list(_PRESPLIT_REQUIRED_PARAMETERS)}; missing {missing}"
         )
+    from aerointentbench.v2.presplit import PRESPLIT_BACKENDS, SPLIT_SOURCES
+
+    backend = parameters["split_backend"]
+    if backend not in PRESPLIT_BACKENDS:
+        raise SchemaValidationError(
+            f"{context}: split_backend {backend!r} must be one of {list(PRESPLIT_BACKENDS)}"
+        )
+    source = parameters["split_source"]
+    if source not in SPLIT_SOURCES:
+        raise SchemaValidationError(
+            f"{context}: split_source {source!r} must be one of {list(SPLIT_SOURCES)} — a "
+            "predefined split is adopted from prior work, never discovered by this benchmark"
+        )
+    for key in ("split_source_reference", "split_location"):
+        value = parameters[key]
+        if not isinstance(value, str) or not value.strip():
+            raise SchemaValidationError(
+                f"{context}: {key} must be a non-empty string documenting the split's origin"
+            )
+    _validate_positive_timings(parameters, context)
 
 
 # --- cross-document checks -------------------------------------------------------------------

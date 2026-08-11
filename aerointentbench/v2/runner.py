@@ -815,16 +815,17 @@ def _catalog_from_specs(scenario: V2Scenario) -> ConfigCatalog:
     The transmitted payload is derived from the KIND, never author-declared, so the
     frozen V1 privacy logic (`privacy_permits`) applies verbatim with no way to
     mislabel: a ``simulated_remote`` config carries REMOTE placement and transmits raw
-    input (forbidden under ``local_only`` and ``features_only``); a ``simulated_split``
-    config carries REMOTE placement and transmits features (forbidden under
-    ``local_only``, permitted under ``features_only``); everything else is LOCAL.
+    input (forbidden under ``local_only`` and ``features_only``); the split kinds
+    (``simulated_split``, ``pretrained_split``) carry REMOTE placement and transmit
+    features (forbidden under ``local_only``, permitted under ``features_only``);
+    everything else is LOCAL.
     """
 
     def _strategy(spec: object) -> Strategy:
         if spec.kind == "simulated_remote":
             placement = Placement.REMOTE
             payload = {TRANSMITTED_PAYLOAD_PARAMETER: TransmittedPayload.RAW_INPUT.value}
-        elif spec.kind == "simulated_split":
+        elif spec.kind in ("simulated_split", "pretrained_split"):
             placement = Placement.REMOTE
             payload = {TRANSMITTED_PAYLOAD_PARAMETER: TransmittedPayload.FEATURES.value}
         else:

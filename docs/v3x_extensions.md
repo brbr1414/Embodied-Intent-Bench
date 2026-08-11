@@ -201,3 +201,35 @@ attempt burns head energy plus timeout plus fallback and coverage collapses.
 Satisfiability of the contract by some schedule is UNVERIFIED (a skyline run on
 this scenario is the open follow-up). Artifacts:
 `results/v3x_deployment_matrix/` (local-only).
+
+## 6. Model catalog with literature-backed splits (2026-08-11)
+
+Owner-directed redesign of what a policy selects: `model_family x execution_mode`
+(full onboard / reduced-precision onboard / predefined split), with split points
+adopted from prior split-computing research as FIXED catalog actions — never
+searched, profiled, or optimized by this benchmark (`docs/v2_design.md` §10.11).
+
+Candidate survey (semantic/instance segmentation with published split
+configurations and obtainable weights):
+
+| Model | Split-computing source | Split point | Weights | Feasibility | Selected |
+|---|---|---|---|---|---|
+| DeepLabV3-ResNet50 (semantic) | SC2 Benchmark, Matsubara et al., TMLR 2023; Entropic Student, Matsubara et al., WACV 2022 | FPBasedResNetBottleneck replaces conv1..layer1; encoder onboard, entropy-coded 24-ch latent on the wire | 6 beta tiers (0.16-5.12), VOC + COCO, MIT, released | High — pip `sc2bench`, verified locally end-to-end | **YES** (beta 0.64 / 5.12 shipped) |
+| Multi-task encoder (cls+det+seg VOC) | Ladon, Matsubara et al., WACV 2025 | Shared supervised-compression encoder onboard, task heads remote | Released (MIT) | Medium — multi-task wrapper work | Later candidate |
+| Mask R-CNN (instance) | MPEG FCM / CompressAI-Vision (InterDigital) | FPN output split (4 feature tensors), codec-compressed | Detectron2 weights + standard codecs | Low-medium — heavy Detectron2/codec deps | Later candidate |
+| LRASPP-MobileNetV3 (semantic) | — none found | — | torchvision | — | **NO — no published split; inventing one is forbidden**, family stays onboard-only |
+| SAM / SAM2 (promptable) | CompressAI-Vision split support; the lab's own Xavier split-point curves (pending) | image-encoder boundary | released | Blocked on lab data + prompt design | Deferred |
+
+Quantized onboard: int8 stays out of scope (no torchvision quantized
+segmentation checkpoints; PyTorch GPU int8 needs TensorRT, banned) — fp16 via the
+torch kind's existing `dtype` knob remains the reduced-precision tier, per-family
+availability differing honestly.
+
+Results on the catalog demo (real checkpoints, seeds fixed):
+`local_strong_fp16` recall 1.0 / battery FAIL 0.066; `presplit_es_b064` recall
+0.375 / battery 0.71 / quality FAIL; `presplit_es_b512` recall 0.25 / battery
+0.71 / quality FAIL; `rule_based` recall 0.875 / battery FAIL 0.166 (the §5
+moving-target pattern again). No tested policy satisfies this contract — kept
+honestly. Artifacts: `results/v3x_model_catalog/` (local-only). Pending
+empirical work: head latency/energy on the boards, server tail latency, and the
+lab's SAM split curves.
