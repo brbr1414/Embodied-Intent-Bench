@@ -246,6 +246,17 @@ Mask R-CNN R50-FPN as `torch_instance_segmentation` (onboard, fake-injectable)
 its codec; fp32 split == onboard mask, pinned). SAM2 (needs a prompt policy)
 and Ladon (unpackaged research repo) excluded with reasons documented.
 
+**Policy-execution cost** (`simulation.policy_execution`, `docs/v2_design.md`
+§10.12): the decision-maker is a costed resource consumer. `onboard` charges
+per-decision latency (mission clock — slow policies skip slots) + energy;
+`server` is a state-up/action-down round trip with DERIVED latency (never one
+constant), MB on the contract budget, and lost-and-free decisions during
+outages (`on_lost_decision` hold/fallback acts instead; the policy is genuinely
+not consulted). Location is deployment configuration, never a policy action;
+`server` is rejected under `local_only` at load. Absent block = historical
+free-policy behaviour, pinned. Onboard costs are configured pending board
+measurement of an actual heavy policy (LLM-as-Policy is the intended consumer).
+
 **V3 P4 real-data pilot** (`experiments/real_segmentation_pilot/uavid.py`,
 `torchvision_models.py`, `uavid_pilot.py`, `docs/v3_design.md` §P4): UAVid (real
 oblique UAV imagery, CC BY-NC-SA, local-only — NEVER committed) ran through the

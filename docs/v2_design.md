@@ -741,3 +741,50 @@ a wrapper); Ladon (research repo is not packaged; vendoring research code into
 the benchmark violates dependency hygiene — revisit if it is released as a
 package); int8 onboard (needs TensorRT, banned; fp16 stays the reduced-precision
 tier).
+
+## 10.12 Policy-execution cost: the decision-maker pays too (2026-08-14)
+
+Until now the selection policy ran for free: `select_config` consumed no mission
+clock, no battery, no link. That is an honest approximation for the rule-family
+policies (microseconds on any hardware) and a false one for anything heavier —
+an LLM policy spends hundreds of milliseconds and joules per decision, and a
+ground-hosted policy cannot decide at all while the link is down. The optional
+`simulation.policy_execution` block makes the decision itself a costed action,
+without touching the frozen V1 `Policy` interface: the runner charges the
+declared costs around each consultation, and the location is deployment
+configuration, never a policy action (the decider cannot choose where the
+decider runs).
+
+- **`location: "onboard"`** — each decision advances the mission clock by
+  `latency_s_per_decision` and charges `energy_j_per_decision` to the battery.
+  A slow policy skips capture slots exactly like a slow executor (the decision
+  resolves before inference starts, on the same captured frame — capture-time
+  GT scoring is untouched). Defaults are 0.0: rule-family policies declare
+  nothing and behave exactly as before; a future LLM policy declares its
+  measured cost.
+- **`location: "server"`** — each decision is a state-up/action-down round trip
+  at the capture-time network sample. Latency is DERIVED, never one opaque
+  constant: `state_mb·8/uplink + rtt + server_compute_s + action_mb·8/downlink`.
+  Sent MB share the contract's communication budget; transfer energy is charged
+  to the battery and ledgered separately (`policy_decision_*` result fields,
+  additive). When either link direction is down or loss exceeds
+  `max_loss_frac`, the decision is **lost** — lost-and-free like telemetry, and
+  the policy is genuinely not consulted (a stateful policy sees nothing) — and
+  the drone acts on `on_lost_decision`: `"hold"` keeps the current
+  configuration (first slot: the scenario fallback), `"fallback"` drops to the
+  scenario fallback. `policy_decisions_lost` counts the slots the policy never
+  saw: a server-hosted policy is blind exactly when the mission is hardest,
+  which is the deployment trade-off this block exists to expose.
+- **Privacy**: a server-hosted policy sends mission state off the vehicle, so
+  `location: "server"` is rejected at load under `local_only` (offboard
+  decision-making is offboard processing). The state message carries no
+  imagery, so `features_only` and `remote_allowed` are legal.
+- **Honesty**: onboard decision costs are configured mission-scale values until
+  a board measurement of the actual policy exists — label their provenance like
+  every other configured number. The B3-measured protocol envelope (~350 B)
+  grounds the state/action message scale.
+- **Absent block = the historical free-policy behaviour**, pinned by
+  `tests/test_v2_policy_execution.py` along with onboard slot-skipping, derived
+  server latency, budget sharing, outage loss accounting, both lost-decision
+  rules (a dead link turns a static-STRONG mission into an all-fallback
+  mission), and the privacy gate.

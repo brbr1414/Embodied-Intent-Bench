@@ -102,7 +102,30 @@ _SIMULATION_FIELDS: Final = (
     "network",
     "network_trace",
     "telemetry",
+    "policy_execution",
 )
+_POLICY_EXECUTION_FIELDS: Final = (
+    "location",
+    "latency_s_per_decision",
+    "energy_j_per_decision",
+    "state_mb_per_decision",
+    "action_mb_per_decision",
+    "server_compute_s",
+    "energy_j_per_mb",
+    "max_loss_frac",
+    "on_lost_decision",
+)
+_POLICY_EXECUTION_LOCATIONS: Final = ("onboard", "server")
+_POLICY_EXECUTION_ONBOARD_FIELDS: Final = ("latency_s_per_decision", "energy_j_per_decision")
+_POLICY_EXECUTION_SERVER_FIELDS: Final = (
+    "state_mb_per_decision",
+    "action_mb_per_decision",
+    "server_compute_s",
+    "energy_j_per_mb",
+    "max_loss_frac",
+    "on_lost_decision",
+)
+_ON_LOST_DECISION_MODES: Final = ("hold", "fallback")
 _TELEMETRY_FIELDS: Final = (
     "interval_s",
     "report_mb",
@@ -302,6 +325,45 @@ class TelemetrySpec:
 
 
 @dataclass(frozen=True, slots=True)
+class PolicyExecutionSpec:
+    """Where the selection policy runs, and what each decision costs.
+
+    The benchmark historically treated the policy's own execution as free. This block
+    makes the decision-maker a resource consumer like everything else, without touching
+    the frozen ``Policy`` interface — the runner charges the declared costs around each
+    ``select_config`` call. The location is deployment configuration, never a policy
+    action (the decider cannot choose where the decider runs).
+
+    ``onboard``: each decision advances the mission clock by ``latency_s_per_decision``
+    (a slow policy skips capture slots exactly like a slow executor) and charges
+    ``energy_j_per_decision`` to the battery. Rule-family policies are microseconds and
+    honestly declare 0.0; a future LLM policy declares its measured cost.
+
+    ``server``: each decision is a round trip at the capture-time network sample —
+    state up, action down. Sent MB share the contract's communication budget; transfer
+    energy is charged like telemetry. Decision latency is DERIVED, never configured
+    opaquely: state_mb/uplink + rtt + server_compute_s + action_mb/downlink. When the
+    link is down (either direction) or loss exceeds ``max_loss_frac``, the decision is
+    LOST — lost-and-free like telemetry — and the drone acts on ``on_lost_decision``:
+    ``hold`` keeps the current configuration (first slot: the scenario fallback),
+    ``fallback`` drops to the scenario fallback. Lost decisions are counted: a
+    server-hosted policy is blind exactly when the mission is hardest.
+    """
+
+    location: str
+    #: Onboard costs (configured mission-scale values; label their provenance).
+    latency_s_per_decision: float = 0.0
+    energy_j_per_decision: float = 0.0
+    #: Server round-trip terms.
+    state_mb_per_decision: float = 0.0
+    action_mb_per_decision: float = 0.0
+    server_compute_s: float = 0.0
+    energy_j_per_mb: float = 0.0
+    max_loss_frac: float = 0.0
+    on_lost_decision: str = "hold"
+
+
+@dataclass(frozen=True, slots=True)
 class SimulationSpec:
     observation_interval_s: float
     #: Safe fallback when the policy's action is invalid. Declared explicitly -- a V2
@@ -317,6 +379,9 @@ class SimulationSpec:
     #: Optional periodic ground-station telemetry. Absent means no telemetry traffic —
     #: existing scenarios and their results are untouched.
     telemetry: TelemetrySpec | None = None
+    #: Optional policy-execution cost model. Absent means the historical free-policy
+    #: behaviour — existing scenarios and their results are untouched.
+    policy_execution: PolicyExecutionSpec | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -544,6 +609,9 @@ def _read_simulation(reader: DocumentReader) -> SimulationSpec:
             evidence_mb_per_detection=evidence_mb,
             stream_mb_per_observation=stream_mb,
         )
+    policy_execution: PolicyExecutionSpec | None = None
+    if reader.get_passthrough("policy_execution") is not None:
+        policy_execution = _read_policy_execution(reader)
     return SimulationSpec(
         observation_interval_s=reader.get_float("observation_interval_s", exclusive_minimum=0.0),
         fallback_config_id=reader.get_str("fallback_config_id"),
@@ -557,6 +625,62 @@ def _read_simulation(reader: DocumentReader) -> SimulationSpec:
         ),
         network_trace=trace,
         telemetry=telemetry,
+        policy_execution=policy_execution,
+    )
+
+
+def _read_policy_execution(reader: DocumentReader) -> PolicyExecutionSpec:
+    block = reader.get_object("policy_execution", allowed_fields=_POLICY_EXECUTION_FIELDS)
+    location = block.get_str("location")
+    if location not in _POLICY_EXECUTION_LOCATIONS:
+        raise SchemaValidationError(
+            f"{block.context}: location {location!r} is not one of "
+            f"{list(_POLICY_EXECUTION_LOCATIONS)}"
+        )
+    # A location's spec may only declare its own cost terms — a stray field from the
+    # other location is a spec mistake, not a default to ignore silently.
+    foreign = (
+        _POLICY_EXECUTION_SERVER_FIELDS
+        if location == "onboard"
+        else _POLICY_EXECUTION_ONBOARD_FIELDS
+    )
+    declared = [f for f in foreign if block.get_passthrough(f) is not None]
+    if declared:
+        raise SchemaValidationError(
+            f"{block.context}: location {location!r} does not use field(s) {declared}"
+        )
+    if location == "onboard":
+        return PolicyExecutionSpec(
+            location=location,
+            latency_s_per_decision=(
+                block.get_float("latency_s_per_decision", minimum=0.0)
+                if block.get_passthrough("latency_s_per_decision") is not None
+                else 0.0
+            ),
+            energy_j_per_decision=(
+                block.get_float("energy_j_per_decision", minimum=0.0)
+                if block.get_passthrough("energy_j_per_decision") is not None
+                else 0.0
+            ),
+        )
+    on_lost = (
+        block.get_str("on_lost_decision")
+        if block.get_passthrough("on_lost_decision") is not None
+        else "hold"
+    )
+    if on_lost not in _ON_LOST_DECISION_MODES:
+        raise SchemaValidationError(
+            f"{block.context}: on_lost_decision {on_lost!r} is not one of "
+            f"{list(_ON_LOST_DECISION_MODES)}"
+        )
+    return PolicyExecutionSpec(
+        location=location,
+        state_mb_per_decision=block.get_float("state_mb_per_decision", exclusive_minimum=0.0),
+        action_mb_per_decision=block.get_float("action_mb_per_decision", exclusive_minimum=0.0),
+        server_compute_s=block.get_float("server_compute_s", minimum=0.0),
+        energy_j_per_mb=block.get_float("energy_j_per_mb", minimum=0.0),
+        max_loss_frac=block.get_fraction("max_loss_frac"),
+        on_lost_decision=on_lost,
     )
 
 
@@ -866,6 +990,17 @@ def _cross_validate(scenario: V2Scenario, context: str) -> None:
             f"{context}: stream_mb_per_observation streams imagery off the vehicle, which "
             f"privacy_level {scenario.contract.privacy_level.value!r} forbids (compression is "
             "not de-identification); enable the stream only under 'remote_allowed'"
+        )
+    policy_execution = scenario.simulation.policy_execution
+    if (
+        policy_execution is not None
+        and policy_execution.location == "server"
+        and scenario.contract.privacy_level is PrivacyLevel.LOCAL_ONLY
+    ):
+        raise SchemaValidationError(
+            f"{context}: policy_execution location 'server' sends mission state off the "
+            "vehicle for offboard decision-making, which privacy_level 'local_only' "
+            "forbids; use 'features_only' or 'remote_allowed'"
         )
     region = scenario.world.valid_region_m
     if region is not None:

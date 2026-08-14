@@ -84,6 +84,10 @@ class ObservationLog:
     #: Optional replay/dashboard time series (``MissionRunner(record_runtime_snapshots=True)``).
     #: ``at_capture`` is exactly the policy-visible ``RuntimeState`` — never ground truth.
     runtime: dict[str, Any] | None = None
+    #: What this observation's decision cost (only when the scenario declares a
+    #: ``policy_execution`` block; ``lost: true`` marks a slot the server policy never
+    #: saw — the acted config came from the on_lost_decision rule, not a selection).
+    policy_decision: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         payload = {
@@ -101,6 +105,8 @@ class ObservationLog:
         }
         if self.runtime is not None:
             payload["runtime"] = self.runtime
+        if self.policy_decision is not None:
+            payload["policy_decision"] = self.policy_decision
         return payload
 
 
@@ -149,6 +155,15 @@ class V2MissionResult:
     stream_frames_lost: int = 0
     stream_mb: float = 0.0
     stream_energy_j: float = 0.0
+    #: Policy-execution additions (additive; location None and all zeros when the
+    #: scenario declares no policy_execution block — the historical free-policy
+    #: behaviour). ``lost`` counts slots a server-hosted policy never saw.
+    policy_execution_location: str | None = None
+    policy_decisions_made: int = 0
+    policy_decisions_lost: int = 0
+    policy_decision_time_s: float = 0.0
+    policy_decision_energy_j: float = 0.0
+    policy_decision_mb: float = 0.0
 
     def to_dict(self, *, include_observations: bool = True) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -186,6 +201,12 @@ class V2MissionResult:
             "stream_frames_lost": self.stream_frames_lost,
             "stream_mb": self.stream_mb,
             "stream_energy_j": self.stream_energy_j,
+            "policy_execution_location": self.policy_execution_location,
+            "policy_decisions_made": self.policy_decisions_made,
+            "policy_decisions_lost": self.policy_decisions_lost,
+            "policy_decision_time_s": self.policy_decision_time_s,
+            "policy_decision_energy_j": self.policy_decision_energy_j,
+            "policy_decision_mb": self.policy_decision_mb,
         }
         if include_observations:
             payload["observations"] = [log.to_dict() for log in self.observations]
@@ -346,6 +367,12 @@ class MissionRunner:
         stream_lost = 0
         stream_mb = 0.0
         stream_energy_j = 0.0
+        policy_exec = scenario.simulation.policy_execution
+        decisions_made = 0
+        decisions_lost = 0
+        decision_time_s = 0.0
+        decision_energy_j = 0.0
+        decision_mb = 0.0
 
         def send_stream_until(until_s: float) -> float:
             """The continuous observation downlink: one frame per capture tick.
@@ -470,7 +497,72 @@ class MissionRunner:
                 schedule_index,
                 current_config,
             )
-            requested = self._select(runtime_state)
+            # The decision itself costs resources when the scenario says so. Onboard:
+            # clock + battery. Server: a state-up/action-down round trip at the
+            # capture-time network sample — unreachable means the policy never saw this
+            # slot and the on_lost_decision rule acts instead (lost-and-free, like
+            # telemetry; a stateful policy is genuinely not consulted).
+            decision_latency_s = 0.0
+            decision_note: dict[str, Any] | None = None
+            if policy_exec is None:
+                requested = self._select(runtime_state)
+            elif policy_exec.location == "onboard":
+                requested = self._select(runtime_state)
+                decision_latency_s = policy_exec.latency_s_per_decision
+                decisions_made += 1
+                decision_time_s += decision_latency_s
+                decision_energy_j += policy_exec.energy_j_per_decision
+                energy_j += policy_exec.energy_j_per_decision
+                decision_note = {
+                    "location": "onboard",
+                    "lost": False,
+                    "latency_s": decision_latency_s,
+                    "energy_j": policy_exec.energy_j_per_decision,
+                }
+            else:  # server round trip
+                sample = self._network_model.state_at(capture_time)
+                reachable = (
+                    sample.uplink_mbps > 0.0
+                    and sample.downlink_mbps > 0.0
+                    and sample.packet_loss_frac <= policy_exec.max_loss_frac
+                )
+                if reachable:
+                    requested = self._select(runtime_state)
+                    round_mb = (
+                        policy_exec.state_mb_per_decision + policy_exec.action_mb_per_decision
+                    )
+                    decision_latency_s = (
+                        policy_exec.state_mb_per_decision * 8.0 / sample.uplink_mbps
+                        + sample.rtt_ms / 1000.0
+                        + policy_exec.server_compute_s
+                        + policy_exec.action_mb_per_decision * 8.0 / sample.downlink_mbps
+                    )
+                    round_j = round_mb * policy_exec.energy_j_per_mb
+                    decisions_made += 1
+                    decision_time_s += decision_latency_s
+                    decision_mb += round_mb
+                    decision_energy_j += round_j
+                    communication_mb += round_mb
+                    energy_j += round_j
+                    decision_note = {
+                        "location": "server",
+                        "lost": False,
+                        "latency_s": decision_latency_s,
+                        "round_trip_mb": round_mb,
+                        "energy_j": round_j,
+                    }
+                else:
+                    decisions_lost += 1
+                    if policy_exec.on_lost_decision == "hold" and current_config is not None:
+                        requested = current_config
+                    else:
+                        requested = scenario.simulation.fallback_config_id
+                    decision_note = {
+                        "location": "server",
+                        "lost": True,
+                        "acted_config_id": requested,
+                        "rule": policy_exec.on_lost_decision,
+                    }
             action = self._validator.validate(requested, current_config_id=current_config)
             config_id = action.config_id
             previous_config = current_config
@@ -516,7 +608,9 @@ class MissionRunner:
                 if (result.diagnostics or {}).get("fallback") is not None:
                     network_behaviour["remote_fallbacks"] += 1
 
-            completion_time = capture_time + result.mission_latency_s
+            # The decision resolves before inference starts, so its latency delays the
+            # same captured frame (capture-time GT scoring is untouched).
+            completion_time = capture_time + decision_latency_s + result.mission_latency_s
             completion_position = self._trajectory.position_at(completion_time)
 
             # Score against the ground truth captured with THIS observation -- never a
@@ -588,6 +682,7 @@ class MissionRunner:
                     execution=result.to_summary(),
                     score=score.to_dict(),
                     runtime=runtime_snapshot,
+                    policy_decision=decision_note,
                 )
             )
             schedule_index = next_index
@@ -619,6 +714,12 @@ class MissionRunner:
             stream_frames_lost=stream_lost,
             stream_mb=stream_mb,
             stream_energy_j=stream_energy_j,
+            policy_execution_location=policy_exec.location if policy_exec else None,
+            policy_decisions_made=decisions_made,
+            policy_decisions_lost=decisions_lost,
+            policy_decision_time_s=decision_time_s,
+            policy_decision_energy_j=decision_energy_j,
+            policy_decision_mb=decision_mb,
         )
 
     # -- helpers ------------------------------------------------------------------------
@@ -690,6 +791,12 @@ class MissionRunner:
         stream_frames_lost: int = 0,
         stream_mb: float = 0.0,
         stream_energy_j: float = 0.0,
+        policy_execution_location: str | None = None,
+        policy_decisions_made: int = 0,
+        policy_decisions_lost: int = 0,
+        policy_decision_time_s: float = 0.0,
+        policy_decision_energy_j: float = 0.0,
+        policy_decision_mb: float = 0.0,
     ) -> V2MissionResult:
         contract = self._scenario.contract
         quality = self._evaluator.quality_details(mission_time_s=mission_time)
@@ -748,6 +855,12 @@ class MissionRunner:
             stream_frames_lost=stream_frames_lost,
             stream_mb=stream_mb,
             stream_energy_j=stream_energy_j,
+            policy_execution_location=policy_execution_location,
+            policy_decisions_made=policy_decisions_made,
+            policy_decisions_lost=policy_decisions_lost,
+            policy_decision_time_s=policy_decision_time_s,
+            policy_decision_energy_j=policy_decision_energy_j,
+            policy_decision_mb=policy_decision_mb,
         )
 
     # Exposed for the CLI/visualiser/replay exporter so they render through the same
