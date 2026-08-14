@@ -254,3 +254,50 @@ communication budget (4.19 MB/frame) — adopting a standard's split point does
 not import its codec; (c) still no policy satisfies the contract, and all VOC/
 COCO-trained recalls on synthetic markers remain domain-mismatch diagnostics,
 never perception evidence.
+
+### 6.2 Hardware-grounded catalog variant: `demo_img1_model_catalog_xavier` (2026-08-14)
+
+The Xavier catalog measurement campaign (RESULTS.md "Xavier catalog campaign":
+9 workloads × all 8 nvpmodel power modes × 3 reps, 216/216 cells; the split
+heads measured as transcriptions pinned byte-identical to the real backends)
+replaced the catalog's configured placeholders with measured values.
+`experiments/jetson_power/make_catalog_profile.py` derives
+`data/v2_scenarios/demo_img1_model_catalog_xavier.json` from the sweep
+aggregate at the board's default MODE_30W_ALL, under the §4 grounding rules:
+onboard rows get measured absolute latency + marginal energy, split rows get
+measured head latency + head energy, the measured idle floor (6.5 W) folds into
+`flight_power_w`, mission-frame payload sizes are kept (the sweep's
+random-input ES payloads differ by content and are recorded in provenance), and
+server/radio terms stay configured. The original catalog scenario and its §6.1
+results are untouched.
+
+Verified outcomes (real checkpoints, single runs, frozen before documenting):
+
+| config | recall | battery | comm MB | failing axes |
+|---|---|---|---|---|
+| local_light_fp32 | 0.50 | 0.722 | 0.1 | quality |
+| local_strong_fp16 | 1.0 | 0.718 | 0.1 | — (SUCCESS) |
+| maskrcnn_onboard_full | 0.875 | 0.719 | 0.1 | — (SUCCESS) |
+| presplit_es_b064 | 0.375 | 0.720 | 0.7 | quality |
+| presplit_ghnd_bq3 | 0.625 | 0.717 | 2.0 | quality |
+| presplit_maskrcnn_fcm | 0.25 | 0.547 | 59.3 | communication + quality |
+| rule_based | 1.0 | 0.718 | 0.1 | — (SUCCESS) |
+
+The grounded story is materially different from the configured stress, and both
+are kept: (a) **the battery knife-edge evaporates on a real Xavier at 30 W** —
+measured marginal energies (0.07–8.1 J/call vs configured 5–800 J) leave every
+onboard config with ≥0.5 battery margin, so `local_strong_fp16` and even
+`maskrcnn_onboard_full` (measured 2.02 J/call, configured 800 J) simply
+succeed, and "no tested policy satisfies the contract" no longer holds — the
+same evaporation §4 documented for the Orin zoo profile. (b) The split-tier
+quality failures and orderings are unchanged (domain mismatch is
+energy-independent), and the FCM row still dies on the wire — now with the
+measured head cost (99 ms / 0.84 J) proving the head was never the problem:
+59.3 MB of uint8 features against a 26 MB budget is. (c) `rule_based` succeeds
+by staying local (0.06 MB total) — with onboard strong this cheap there is
+nothing to escalate away from, so adaptation adds nothing here; that is a
+finding about the regime, not a defect. Artifacts:
+`results/v3x_catalog_xavier/` (local-only). MODE_30W_ALL's governor jitter on
+light workloads is carried into the grounded values with rep-std recorded in
+scenario provenance (A7 mechanism; `--mode` regenerates for any of the other
+seven measured modes).
