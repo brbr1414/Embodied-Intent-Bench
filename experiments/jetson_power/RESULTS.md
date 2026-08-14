@@ -536,3 +536,83 @@ rajat-owned checkpoint cache at `/images/aerobench` is unreachable and torch
 falls back to downloading (or fails with PermissionError, which cost this
 session one aborted sweep run). Board verified back at its default MODE_30W_ALL
 with the default governor after the second reboot.
+
+# Xavier catalog campaign (2026-08-13) — split heads vs onboard tiers, all eight power modes
+
+The model-catalog workloads (`docs/v2_design.md` §10.11): onboard fp32/fp16
+tiers at catalog resolutions, Mask R-CNN onboard, and the onboard **head** of
+each published split, measured with the sweep protocol (`measure_catalog.py`;
+10 s idle baseline, 5 warmups, ≥30 iters and ≥10 s timed, INA3221 at ~20 Hz).
+Split-head timed region = the real head compute — encoder forward + entropy
+coding / quantization — and the recorded payload is the bytes the head actually
+encoded. Heads are **transcriptions** (`split_heads.py`; `sc2bench` does not
+install on the board's py3.8): `verify_heads.py` pinned all four
+**byte-identical** to the Mac real backends before any measurement (ES CUDA
+symbols 0/289,560 mismatch; compressai 1.2.6 vs 1.2.8 compress byte-identical
+with a `_matrix0→matrices.0` rename shim).
+
+Matrix: 9 workloads × 8 modes (every nvpmodel entry, including the 30W
+core-count variants and 15W_DESKTOP) × 3 reps = 216 cells; **all 216
+measured**. The MODE_10W × maskrcnn cells came last (2026-08-14, one extra
+owner-run reboot into 10 W): the original 10W window ran before the torchvision
+CUDA build finished. Raw
+records: `results/jetson_power_xavier/raw_catalog/` (local-only); aggregate:
+`jetson_catalog_summary.json` via `aggregate_catalog.py` (full per-cell table
+there — headline rows below).
+
+| mode | dlv3_fp32 768² ms / J | dlv3_fp16 768² ms / J | lraspp_fp16 ms / J | es_b064 head ms / KB | ghnd_bq3 head ms / KB | fcm head ms / KB | maskrcnn ms / J |
+|---|---|---|---|---|---|---|---|
+| MODE_10W | 2415 / 20.4 | 504 / 4.5 | 39.5 / 0.28 | 69.7 / 21.4 | 27.7 / 39.6 | 237.7 / 4190 | 492 / 4.4 |
+| MODE_15W | 977 / 13.8 | 218 / 3.4 | 21.8 / 0.22 | 58.6 / 21.5 | 12.2 / 39.6 | 102.6 / 4190 | 255 / 3.5 |
+| MODE_30W_ALL | 734 / 12.9 | 168 / 3.3 | 27.6 / 0.25 | 68.7 / 21.5 | 28.0 / 39.6 | 99.3 / 4190 | 200 / 3.3 |
+| MAXN | 506 / 16.5 | 124 / 4.2 | 11.7 / 0.22 | 41.8 / 21.5 | 7.4 / 39.6 | 68.0 / 4190 | 143 / 4.1 |
+
+**Findings.**
+
+- **fp16 is what rescues the strong tier on Xavier.** dlv3_r50 at the catalog's
+  768×576 runs ×4.4–4.8 faster in fp16 at every mode (2415→504 ms at 10 W,
+  734→168 ms at 30 W) at ~¼ the energy. fp32 cannot sustain the 1 Hz cadence in
+  *any* Xavier mode (best 506 ms at MAXN is marginal); fp16 sustains it
+  everywhere except 10 W. The catalog's "quantized tier" is not an optimization
+  footnote on this board — it is the difference between having and not having a
+  strong onboard option.
+- **Published split heads are cheap onboard.** The GHND-BQ head costs
+  7.4–28 ms / ≤0.26 J total; the ES heads 40–70 ms (entropy coding is CPU-side,
+  hence mode-sensitive but never dominant). Both are far below any full strong
+  tier while emitting 2.3–39.6 KB payloads. The FCM Mask R-CNN head is the
+  outlier in the other direction: moderate compute (68–238 ms) but a fixed
+  **4.19 MB/frame** payload — measurement confirms the round-2 finding that the
+  standard's split point, without its codec, is priced out by the wire, not the
+  head.
+- **ES payload bytes are content-dependent; GHND's are not.** On the sweep's
+  uniform-random input the ES β0.64 head emits 21.4–21.5 KB vs the 12.6 KB the
+  same head produced on mission frames (entropy coding compresses noise worse);
+  GHND-BQ (fixed-size 8-bit bottleneck quantization, no entropy stage) emits
+  exactly 39.6 KB on both. Catalog payload numbers must say which input they
+  came from; the sweep's are labelled random-input.
+- **Mask R-CNN onboard is measured at 3.3–4.4 J total per call across the whole
+  mode ladder** (143 ms at MAXN to 492 ms at 10 W) — two orders of magnitude
+  below the 800 J configured value the catalog scenario currently carries, which
+  was a stress placeholder. Notably it degrades far more gracefully at 10 W than
+  dlv3_fp32 (×2.5 vs ×3.3 from 30 W, and it stays within a 1 Hz cadence).
+  Grounding that config row is now possible and pending the usual owner
+  decision.
+- **The four 30W core-count variants share GPU clocks, and the GPU-bound cells
+  prove it**: dlv3_fp32 is 734.2–734.4 ms across 2CORE/4CORE/6CORE/ALL. Light
+  CPU-touching workloads differ only through governor behaviour — MODE_30W_ALL
+  (8 cores at lower clocks) shows the familiar DVFS jitter on light loads
+  (lraspp_fp32 ±35.6 ms, ghnd head ±31.7 ms across reps; same A7 mechanism,
+  governor-entangled, not thermal), while the core-count variants are clean.
+  For GPU workloads the 8-mode grid confirms the nvpmodel.conf reading: 4
+  GPU-distinct points, the rest CPU-topology variants.
+- **Board-side gotchas this campaign added**: NVIDIA torch 2.1 aarch64 **CPU**
+  conv produces NaN in whole channels (mkldnn off too) — verify on CUDA only;
+  the pip torchvision 0.16.2 wheel has no compiled C++ ops, so Mask R-CNN dies
+  at NMS — fixed with a FORCE_CUDA sm_72 source build (0.16.2+c6f3977, in
+  `/images/aerobench/build/vision`); INA3221 chmod must cover `in*_label`, not
+  just the `*_input` files.
+
+Nothing remains in this campaign. After the final 10W cells the board was
+rebooted back and verified at its default MODE_30W_ALL, default governor;
+INA3221 rails and `/images` re-opened for the next session (both reset again
+on any reboot).
