@@ -301,3 +301,65 @@ finding about the regime, not a defect. Artifacts:
 light workloads is carried into the grounded values with rep-std recorded in
 scenario provenance (A7 mechanism; `--mode` regenerates for any of the other
 seven measured modes).
+
+## 7. LLM-as-Policy prototype (2026-08-14)
+
+`experiments/llm_policy/` adapts a local instruction LLM (Qwen2.5-1.5B-Instruct,
+fp32 on MPS — the intent compiler's model) to the frozen V1 `Policy` protocol.
+The prompt is a deterministic pure function of the policy-visible surface only
+(contract, `RuntimeState`, allowed configs with public profiles); the mission is
+entered through the new `MissionRunner(..., policy=...)` injection seam so the
+LLM stack never touches the core package. Two output-constraint modes: `choice`
+(length-normalized log-likelihood over the allowed config_ids — invalid actions
+impossible by construction) and `generate` (greedy + strict parse; unparseable
+replies fall back and are counted as findings). CI pins the adapter with a fake
+backend (`tests/test_llm_policy.py`).
+
+First results, single runs on `demo_img1_model_catalog_xavier` (features_only
+contract, 10 options; compare rule_based recall 1.0 SUCCESS in §6.2):
+
+| run | picked (all slots) | recall | outcome |
+|---|---|---|---|
+| 1.5B llm_choice, policy free | presplit_ghnd_bq3 ×48 | 0.625 | quality FAIL |
+| 1.5B llm_generate, policy free | remote_strong_raw ×48 | 0.500 | **privacy FAIL** (48 blocked, fallback ran) |
+| 1.5B llm_choice, decision cost charged (3.31 s) | presplit_ghnd_bq3 ×12 | 0.125 | quality FAIL, **36/48 slots skipped** |
+| 0.5B llm_choice, policy free | presplit_ghnd_bq3 ×48 | 0.625 | quality FAIL |
+| 0.5B llm_generate, policy free | remote_strong_raw ×48 | 0.500 | **privacy FAIL** (48 blocked) |
+| 0.5B llm_choice, decision cost charged (1.27 s) | presplit_ghnd_bq3 ×24 | 0.250 | quality FAIL, 24/48 slots skipped |
+
+Findings, each labelled as behaviour of one small model on one prompt design:
+
+- **The format constraint works; judgment is the gap.** Zero parse failures in
+  either mode. `choice` picked a defensible option (the best privacy-legal
+  split tier) but never the winning one (`local_strong_fp16`), and never
+  switched. `generate` picked the raw-RGB remote on every slot **despite the
+  prompt naming the privacy level and warning about violations** — the same
+  unsafe-privacy failure direction the intent compiler measured (§ intent
+  compiler README), now as 48 recorded violation attempts. Privacy is
+  empirically the axis a small instruction model gets wrong first.
+- **The decision cost is not a footnote — it is the mission.** Charging the
+  measured mean decision wall-clock (3.31 s on the Mac, `policy_execution`
+  onboard, DIAGNOSTIC variant with Mac provenance labelled) makes the policy
+  spend 39.7 s of a 47.7 s mission thinking: 12 of 48 slots processed, recall
+  0.625 → 0.125. The first real use of §10.12 does exactly what it was built
+  for: a policy must pay its own latency bill, and this one cannot. (A Jetson
+  measurement of the same model would be slower still; the Mac number is a
+  lower bound on the problem, not a board claim.)
+- Rule-family baselines beat the 1.5B LLM on this scenario at ~10⁴× less
+  decision latency. Whether a larger model or a better prompt closes the
+  judgment gap — and whether anything closes the cost gap — is the open
+  experiment this prototype exists to make runnable.
+- **Shrinking the model changes the bill, not the judgment.** Qwen2.5-0.5B
+  (same family, 3× smaller, ~2.6× faster per decision) makes the IDENTICAL
+  choice on every slot in both modes — the same defensible-but-losing split
+  tier, the same 48 privacy violations. On the cost-charged variant its
+  smaller bill buys back coverage arithmetically (1.27 s → every other slot →
+  24/48 processed → recall 0.250, exactly 2× the 1.5B's 12/48 → 0.125). At
+  this scale the judgment gap is size-invariant while the cost gap scales
+  with size — so for this prompt, the smallest model dominates the larger one
+  outright, and the interesting open direction is UP (3B/7B) or a better
+  prompt, not further down.
+
+Artifacts: `results/llm_policy/` (local-only): full per-decision choices, raw
+replies, wall-clock stats, and the cost-charged variant scenario with its
+provenance note.

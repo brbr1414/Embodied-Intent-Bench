@@ -277,11 +277,21 @@ class MissionRunner:
     """Runs one V2 scenario under one policy, deterministically."""
 
     def __init__(
-        self, scenario: V2Scenario, policy_name: str, *, record_runtime_snapshots: bool = False
+        self,
+        scenario: V2Scenario,
+        policy_name: str,
+        *,
+        record_runtime_snapshots: bool = False,
+        policy: object | None = None,
     ) -> None:
         self._scenario = scenario
         self._policy_name = policy_name
-        self._policy = build_policy(policy_name, scenario)
+        #: Composition-root injection seam: an experiment may pass a constructed policy
+        #: object (V1 ``Policy`` protocol) that is not in the registry — e.g. a policy
+        #: with heavy dependencies that must stay out of the core package. The name is
+        #: then a label for the result file only. Everything the policy sees is still
+        #: the frozen policy-visible surface; injection changes construction, not access.
+        self._policy = policy if policy is not None else build_policy(policy_name, scenario)
         #: Off by default so existing result files stay byte-identical. When on, every
         #: ObservationLog carries a ``runtime`` snapshot for replay/dashboard consumers.
         self._record_runtime_snapshots = record_runtime_snapshots
