@@ -155,6 +155,17 @@ class V2MissionResult:
     stream_frames_lost: int = 0
     stream_mb: float = 0.0
     stream_energy_j: float = 0.0
+    #: Numeric-metric restatement (additive): signed normalized slack per constraint
+    #: axis + the binding minimum, verified against ``constraints`` at construction
+    #: (divergence raises — a wrong restatement never ships). ``min_margin >= 0``
+    #: coincides with ``mission_success``. For strict quality operators the margins
+    #: are undefined and this carries an ``unavailable`` note instead.
+    contract_margins: dict[str, Any] = field(default_factory=dict)
+    #: Operator-timeliness ledger (additive): per target, when it first entered a
+    #: capture footprint, was first matched, and when its evidence first REACHED the
+    #: ground station. ``available`` is False when the scenario has no evidence layer
+    #: (delivery is undefined without one). Diagnostics only — no constraint reads it.
+    target_timeliness: dict[str, Any] = field(default_factory=dict)
     #: Policy-execution additions (additive; location None and all zeros when the
     #: scenario declares no policy_execution block — the historical free-policy
     #: behaviour). ``lost`` counts slots a server-hosted policy never saw.
@@ -201,6 +212,8 @@ class V2MissionResult:
             "stream_frames_lost": self.stream_frames_lost,
             "stream_mb": self.stream_mb,
             "stream_energy_j": self.stream_energy_j,
+            "contract_margins": dict(self.contract_margins),
+            "target_timeliness": dict(self.target_timeliness),
             "policy_execution_location": self.policy_execution_location,
             "policy_decisions_made": self.policy_decisions_made,
             "policy_decisions_lost": self.policy_decisions_lost,
@@ -377,6 +390,7 @@ class MissionRunner:
         stream_lost = 0
         stream_mb = 0.0
         stream_energy_j = 0.0
+        first_delivered_s: dict[str, float] = {}
         policy_exec = scenario.simulation.policy_execution
         decisions_made = 0
         decisions_lost = 0
@@ -411,14 +425,17 @@ class MissionRunner:
                 next_stream_s += interval
             return added_j
 
-        def send_evidence(completion_s: float, predicted_components: int) -> float:
-            """Transmit evidence for one observation's predicted detections; return energy.
+        def send_evidence(completion_s: float, predicted_components: int) -> tuple[bool, float]:
+            """Transmit evidence for one observation's predicted detections.
 
-            One attempt at completion time against the network sample: the payload is
-            ``predicted_components x evidence_mb_per_detection`` (the drone reports what
-            it BELIEVES it found — false positives spend real communication). During an
-            outage the evidence is lost and free; the loss count is the user-visibility
-            gap. Fire-and-forget like the status reports: no queueing, no retransmit.
+            Returns ``(delivered, energy_j)``. One attempt at completion time against
+            the network sample: the payload is ``predicted_components x
+            evidence_mb_per_detection`` (the drone reports what it BELIEVES it found —
+            false positives spend real communication). During an outage the evidence is
+            lost and free; the loss count is the user-visibility gap. Fire-and-forget
+            like the status reports: no queueing, no retransmit — a lost detection
+            reaches the operator only if the target is matched AGAIN later on a live
+            link, which is what the timeliness ledger measures.
             """
             nonlocal evidence_sent, evidence_lost, evidence_mb, evidence_energy_j
             nonlocal communication_mb
@@ -427,7 +444,7 @@ class MissionRunner:
                 or telemetry.evidence_mb_per_detection <= 0.0
                 or predicted_components <= 0
             ):
-                return 0.0
+                return False, 0.0
             sample = self._network_model.state_at(completion_s)
             if sample.uplink_mbps > 0.0 and sample.packet_loss_frac <= telemetry.max_loss_frac:
                 evidence_sent += 1
@@ -436,9 +453,9 @@ class MissionRunner:
                 communication_mb += sent_mb
                 sent_j = sent_mb * telemetry.energy_j_per_mb
                 evidence_energy_j += sent_j
-                return sent_j
+                return True, sent_j
             evidence_lost += 1
-            return 0.0
+            return False, 0.0
 
         def send_telemetry_until(until_s: float) -> float:
             """Attempt every report scheduled up to ``until_s``; return the energy added.
@@ -635,7 +652,15 @@ class MissionRunner:
             communication_energy_j += result.communication_energy_j
             energy_j += send_telemetry_until(completion_time)
             energy_j += send_stream_until(completion_time)
-            energy_j += send_evidence(completion_time, score.predicted_components)
+            evidence_delivered, evidence_j = send_evidence(
+                completion_time, score.predicted_components
+            )
+            energy_j += evidence_j
+            if evidence_delivered:
+                # Operator-timeliness ledger: the matched-target ids are the
+                # evaluator's standardized output (never raw GT read here).
+                for target_id in score.matched_target_ids:
+                    first_delivered_s.setdefault(target_id, completion_time)
             battery_frac = max(0.0, 1.0 - energy_j / capacity_j)
             latencies.append(result.mission_latency_s)
             selections.append(config_id)
@@ -657,7 +682,8 @@ class MissionRunner:
                         self._renderer.footprint_at(skipped_position),
                         self._scenario.camera.output_width_px,
                         self._scenario.camera.output_height_px,
-                    )
+                    ),
+                    time_s=skipped_index * interval,
                 )
 
             runtime_snapshot: dict[str, Any] | None = None
@@ -724,6 +750,8 @@ class MissionRunner:
             stream_frames_lost=stream_lost,
             stream_mb=stream_mb,
             stream_energy_j=stream_energy_j,
+            first_delivered_s=first_delivered_s,
+            evidence_layer_on=telemetry is not None and telemetry.evidence_mb_per_detection > 0.0,
             policy_execution_location=policy_exec.location if policy_exec else None,
             policy_decisions_made=decisions_made,
             policy_decisions_lost=decisions_lost,
@@ -801,6 +829,8 @@ class MissionRunner:
         stream_frames_lost: int = 0,
         stream_mb: float = 0.0,
         stream_energy_j: float = 0.0,
+        first_delivered_s: dict[str, float] | None = None,
+        evidence_layer_on: bool = False,
         policy_execution_location: str | None = None,
         policy_decisions_made: int = 0,
         policy_decisions_lost: int = 0,
@@ -824,6 +854,44 @@ class MissionRunner:
         quality["quality_metric"] = contract.quality_metric
         quality["quality_value"] = quality_value
         quality["quality_threshold"] = contract.quality_threshold
+
+        from aerointentbench.v2.mission_metrics import contract_margins as compute_margins
+        from aerointentbench.v2.mission_metrics import verify_margins
+
+        try:
+            margin_report = compute_margins(
+                contract,
+                quality_value=quality_value,
+                final_time_s=mission_time,
+                final_battery_frac=battery_frac,
+                communication_mb=communication_mb,
+                privacy_violation_count=privacy_violations,
+                processed_observation_count=self._evaluator.processed_observations,
+            )
+            verify_margins(margin_report, constraints)
+            margins_payload = margin_report.to_dict()
+        except ValueError as error:
+            # Strict quality operators leave the margin undefined at the boundary;
+            # the mission is still legal, so record why instead of failing the run.
+            margins_payload = {"unavailable": str(error)}
+
+        timeline = self._evaluator.target_timeline()
+        delivered = first_delivered_s or {}
+        targets_payload: dict[str, Any] = {}
+        for target_id, times in timeline.items():
+            entry = dict(times)
+            entry["first_delivered_s"] = delivered.get(target_id)
+            targets_payload[target_id] = entry
+        target_timeliness: dict[str, Any] = {
+            "available": evidence_layer_on,
+            "targets": targets_payload,
+        }
+        if not evidence_layer_on:
+            target_timeliness["note"] = (
+                "no evidence layer in this scenario (telemetry.evidence_mb_per_detection "
+                "absent or 0) — operator delivery is undefined; first_delivered_s is null "
+                "by construction"
+            )
 
         notes.setdefault(
             "measurement_honesty",
@@ -849,6 +917,8 @@ class MissionRunner:
             config_selection_history=tuple(selections),
             observations=logs,
             notes=notes,
+            contract_margins=margins_payload,
+            target_timeliness=target_timeliness,
             privacy_violation_count=privacy_violations,
             failed_inference_count=failed_inferences,
             communication_energy_j=communication_energy_j,

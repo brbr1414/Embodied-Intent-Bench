@@ -788,3 +788,78 @@ decider runs).
   server latency, budget sharing, outage loss accounting, both lost-decision
   rules (a dead link turns a static-STRONG mission into an all-fallback
   mission), and the privacy gate.
+
+## 10.13 Numeric mission metrics: margins and skyline regret (2026-08-19)
+
+Binary `mission_success` answers "did the mission keep the contract" and nothing
+else — policies that both succeed (or both fail) are indistinguishable, and
+knife-edge passes look identical to comfortable ones. `v2/mission_metrics.py` adds
+two numeric layers, both RESTATEMENTS (never a second success computation):
+
+- **Contract margins** — one signed, normalized slack per constraint axis,
+  denominated by the contract itself so there are no tunable weights: battery
+  `(final−floor)/(1−floor)`, communication `(budget−used)/budget`, deadline
+  `(deadline−t)/deadline`, quality `(value−θ)/(1−θ)` for `>=` contracts (mirrored
+  for `<=`; strict operators are undefined and recorded as `unavailable`), privacy
+  `0` when clean else `−violations/processed`. Headline scalar `min_margin` = the
+  binding axis; `min_margin ≥ 0` coincides with `mission_success` by construction,
+  and the runner verifies every axis sign against the evaluator's booleans at
+  result construction — divergence raises (the replay-exporter rule). Privacy is
+  binary and participates in the minimum only when violated: a clean mission has
+  no privacy "slack" to compare. Every `V2MissionResult` now carries
+  `contract_margins` (additive field).
+- **Skyline regret** — `skyline_recall − achieved_recall`: distance from the
+  GT-aware offline optimum, i.e. difficulty-normalized. `target_recall` contracts
+  only (loud error otherwise); the skyline does not model `policy_execution`
+  decision costs, so regret under a cost-charged scenario carries that asymmetry
+  as a caveat.
+
+Evaluation stance, stated deliberately: **the contract defines sufficiency.**
+Among successful missions, larger margins are better; quality surplus above the
+threshold lives in the quality margin, never in a separate reward.
+
+**Sanity axes (2026-08-21 amendment, owner decision).** On this benchmark's
+fixed-path missions the deadline margin is a path-determined constant identical
+across policies (verified: every grand-tour policy tied at +0.083), so — like
+binary privacy — the deadline axis participates in ``min_margin`` only when
+violated. Mission success is UNCHANGED (still the 5-constraint AND; the schema
+keeps ``deadline_s``, set as a generous sanity bound in new scenarios); mission
+time is otherwise evaluated numerically only (margin vector + ``final_time_s``).
+With that amendment the first §6.2 re-report becomes discriminative on the
+success side (binding axes become battery/quality instead of a shared deadline
+tie), while the FCM row still reads as a double failure at a glance (quality
+−1.50, communication −1.28). Per-detection timeliness (first-visibility →
+operator delivery) is the planned successor for the time axis: it enters as
+NUMERIC diagnostics first; whether it becomes a sixth constraint (and with what
+bound) is decided after the measured distributions exist.
+
+## 10.14 Operator timeliness: the per-target delivery ledger (2026-08-21)
+
+The successor to the retired mission-deadline axis (§10.13 amendment). Every V2
+result now carries ``target_timeliness`` — for each ground-truth target, three
+mission timestamps:
+
+- ``first_visible_s`` — when it first entered a capture footprint (processed OR
+  skipped slot; evaluator-owned, GT-derived like recall);
+- ``first_matched_s`` — when a prediction first matched it;
+- ``first_delivered_s`` — when an evidence transmission carrying it first REACHED
+  the ground station (the §10.9 evidence layer decides deliverability; evidence
+  lost in an outage delivers nothing, and a lost detection reaches the operator
+  only if the target is matched again later on a live link — re-detection is the
+  only retransmission, by design).
+
+Boundaries: visibility/matching bookkeeping lives in the evaluator; the runner
+joins only the evaluator's standardized ``matched_target_ids`` with its own
+evidence send/lost accounting — no raw GT crosses into the runner. Scenarios
+without an evidence layer mark the ledger ``available: false`` (delivery is
+undefined without one), and the metric helpers fail loudly rather than
+fabricating zero delays.
+
+Metrics (``mission_metrics``): ``delivery_delays(result)`` (per-target
+``first_delivered − first_visible``, ``None`` = never reached the operator) and
+``timely_recall(result, T, total_targets)`` — the fraction of ALL targets
+delivered within ``T``, reported as a curve over horizons. **Diagnostics only**:
+no constraint reads the ledger yet. Promotion to a sixth constraint — and any
+choice of horizon — waits for measured distributions across policies and must be
+argued from operational grounds, jointly with an alarm-burden axis (§6.5's
+recall-gaming finding shows a spray model would game timeliness the same way).

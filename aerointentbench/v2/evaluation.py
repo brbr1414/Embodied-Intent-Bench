@@ -75,6 +75,11 @@ class MissionEvaluator:
     false_positive_detections: int = 0
     processed_observations: int = 0
     scores: list[ObservationScore] = field(default_factory=list)
+    #: Per-target timeline (mission seconds): when each target FIRST entered a capture
+    #: footprint (processed or skipped slot) and when it was FIRST matched. Feeds the
+    #: operator-timeliness diagnostics; GT-derived, so evaluator-owned like recall.
+    first_visible_s: dict[str, float] = field(default_factory=dict)
+    first_matched_s: dict[str, float] = field(default_factory=dict)
 
     def update(self, observation: Observation, prediction_mask: np.ndarray) -> ObservationScore:
         """Score one prediction against its capture-time ground truth."""
@@ -85,6 +90,8 @@ class MissionEvaluator:
             )
         self.processed_observations += 1
         self.encountered_target_ids.update(observation.visible_target_ids)
+        for target_id in observation.visible_target_ids:
+            self.first_visible_s.setdefault(target_id, observation.scheduled_capture_time_s)
 
         pred_labels, pred_count = label_components(prediction_mask)
         pred_areas = np.bincount(pred_labels.ravel(), minlength=pred_count + 1)
@@ -127,6 +134,8 @@ class MissionEvaluator:
         self.total_predictions += len(component_ids)
         self.false_positive_detections += false_positives
         self.found_target_ids.update(matched_targets)
+        for target_id in matched_targets:
+            self.first_matched_s.setdefault(target_id, observation.scheduled_capture_time_s)
 
         score = ObservationScore(
             observation_id=observation.observation_id,
@@ -140,7 +149,9 @@ class MissionEvaluator:
         self.scores.append(score)
         return score
 
-    def note_skipped_visibility(self, visible_target_ids: tuple[str, ...]) -> None:
+    def note_skipped_visibility(
+        self, visible_target_ids: tuple[str, ...], time_s: float | None = None
+    ) -> None:
         """Record targets that were visible during a *skipped* scheduled observation.
 
         No prediction exists for a skipped capture -- the executor never ran -- so this
@@ -151,6 +162,19 @@ class MissionEvaluator:
         count, never the encountered set.
         """
         self.encountered_target_ids.update(visible_target_ids)
+        if time_s is not None:
+            for target_id in visible_target_ids:
+                self.first_visible_s.setdefault(target_id, time_s)
+
+    def target_timeline(self) -> dict[str, dict[str, float | None]]:
+        """First-visible / first-matched mission times per target seen so far."""
+        timeline: dict[str, dict[str, float | None]] = {}
+        for target_id in sorted(set(self.first_visible_s) | set(self.first_matched_s)):
+            timeline[target_id] = {
+                "first_visible_s": self.first_visible_s.get(target_id),
+                "first_matched_s": self.first_matched_s.get(target_id),
+            }
+        return timeline
 
     # -- mission totals -----------------------------------------------------------------
 
