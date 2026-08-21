@@ -72,6 +72,7 @@ def _cmd_validate(args: argparse.Namespace) -> int:
 
 def _cmd_overview(args: argparse.Namespace) -> int:
     from aerointentbench.v2.objects import ObjectLayer
+    from aerointentbench.v2.runner import _load_scenario_assets
     from aerointentbench.v2.trajectory import build_trajectory
     from aerointentbench.v2.visualize import render_overview
     from aerointentbench.v2.world import open_world
@@ -87,7 +88,9 @@ def _cmd_overview(args: argparse.Namespace) -> int:
         scenario,
         world,
         build_trajectory(scenario.trajectory, scenario.drone.speed_mps),
-        ObjectLayer(scenario.objects),
+        # Same asset resolution as a mission run — an asset-based scenario must not
+        # fail (or silently draw nothing) just because it is being previewed.
+        ObjectLayer(scenario.objects, assets=_load_scenario_assets(scenario)),
         args.output / f"{scenario.scenario_id}_overview.png",
     )
     print(f"wrote {path}")
