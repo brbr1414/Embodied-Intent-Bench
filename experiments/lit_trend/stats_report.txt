@@ -1,0 +1,63 @@
+== PRIMARY ==
+year counts: 2015:0, 2016:0, 2017:0, 2018:3, 2019:1, 2020:3, 2021:6, 2022:9, 2023:4, 2024:6, 2025:23
+total unique publications: 55
+year-over-year growth: 2016: n/a (prev 0); 2017: n/a (prev 0); 2018: n/a (prev 0); 2019: -67%; 2020: +200%; 2021: +100%; 2022: +50%; 2023: -56%; 2024: +50%; 2025: +283%
+2019 -> 2025 growth factor: 23.00x (CAGR +68.6% over 6 y)
+2020 -> 2025 growth factor: 7.67x (CAGR +50.3% over 5 y)
+share published 2015-2018: 5.5%
+share published 2019-2021: 18.2%
+share published 2022-2025: 76.4%
+top venues (primary):
+    4  arXiv (Cornell University)
+    2  IEEE Transactions on Mobile Computing
+    2  SSRN Electronic Journal
+    2  IEEE Transactions on Parallel and Distributed Systems
+    1  Lancaster EPrints (Lancaster University)
+    1  ACM Transactions on Sensor Networks
+    1  ACM Transactions on Internet of Things
+    1  2022 4th International Conference on Advances in Computer Technology, Information Science and Communications (CTISC)
+    1  Knowledge-Based Systems
+    1  Chips
+top topics (primary):
+   11  Advanced Neural Network Applications
+    4  IoT and Edge/Fog Computing
+    3  Adversarial Robustness in Machine Learning
+    3  IoT Networks and Protocols
+    2  CCD and CMOS Imaging Sensors
+    2  Energy Efficient Wireless Sensor Networks
+    2  UAV Applications and Optimization
+    2  Advanced Image Processing Techniques
+    2  Evolutionary Algorithms and Applications
+    2  Image and Video Quality Assessment
+
+== BROAD ==
+year counts: 2015:1, 2016:0, 2017:3, 2018:4, 2019:5, 2020:28, 2021:28, 2022:36, 2023:37, 2024:42, 2025:86
+total unique publications: 270
+year-over-year growth: 2016: -100%; 2017: n/a (prev 0); 2018: +33%; 2019: +25%; 2020: +460%; 2021: +0%; 2022: +29%; 2023: +3%; 2024: +14%; 2025: +105%
+2019 -> 2025 growth factor: 17.20x (CAGR +60.7% over 6 y)
+2020 -> 2025 growth factor: 3.07x (CAGR +25.2% over 5 y)
+share published 2015-2018: 3.0%
+share published 2019-2021: 22.6%
+share published 2022-2025: 74.4%
+top venues (broad):
+   31  arXiv (Cornell University)
+    8  Lecture notes in computer science
+    6  IEEE Transactions on Mobile Computing
+    6  ACM Transactions on Embedded Computing Systems
+    5  IEEE Internet of Things Journal
+    3  Future Generation Computer Systems
+    3  IEEE Transactions on Parallel and Distributed Systems
+    3  Proceedings of the ACM on Interactive Mobile Wearable and Ubiquitous Technologies
+    2  ACM Transactions on Sensor Networks
+    2  SSRN Electronic Journal
+top topics (broad):
+   72  Advanced Neural Network Applications
+   40  IoT and Edge/Fog Computing
+   12  Advanced Memory and Neural Computing
+   10  Neural Networks and Applications
+   10  Adversarial Robustness in Machine Learning
+    8  Context-Aware Activity Recognition Systems
+    8  Age of Information Optimization
+    5  Brain Tumor Detection and Classification
+    4  Energy Efficient Wireless Sensor Networks
+    4  Video Surveillance and Tracking Methods

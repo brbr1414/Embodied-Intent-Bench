@@ -1,0 +1,63 @@
+== PRIMARY ==
+year counts: 2015:0, 2016:2, 2017:0, 2018:3, 2019:4, 2020:6, 2021:7, 2022:12, 2023:6, 2024:10, 2025:28
+total unique publications: 78
+year-over-year growth: 2016: n/a (prev 0); 2017: -100%; 2018: n/a (prev 0); 2019: +33%; 2020: +50%; 2021: +17%; 2022: +71%; 2023: -50%; 2024: +67%; 2025: +180%
+2019 -> 2025 growth factor: 7.00x (CAGR +38.3% over 6 y)
+2020 -> 2025 growth factor: 4.67x (CAGR +36.1% over 5 y)
+share published 2015-2018: 6.4%
+share published 2019-2021: 21.8%
+share published 2022-2025: 71.8%
+top venues (primary):
+    7  arXiv (Cornell University)
+    3  SSRN Electronic Journal
+    2  IEEE Transactions on Mobile Computing
+    2  Lecture notes in computer science
+    2  Computer Networks
+    2  IEEE Transactions on Parallel and Distributed Systems
+    1  Lancaster EPrints (Lancaster University)
+    1  ACM Transactions on Embedded Computing Systems
+    1  ACM Transactions on Sensor Networks
+    1  ACM Transactions on Internet of Things
+top topics (primary):
+   11  Advanced Neural Network Applications
+    5  IoT and Edge/Fog Computing
+    4  Image and Video Quality Assessment
+    3  CCD and CMOS Imaging Sensors
+    3  Advanced Image Processing Techniques
+    3  Green IT and Sustainability
+    3  Adversarial Robustness in Machine Learning
+    3  IoT Networks and Protocols
+    2  Energy Efficient Wireless Sensor Networks
+    2  UAV Applications and Optimization
+
+== BROAD ==
+year counts: 2015:3, 2016:5, 2017:7, 2018:5, 2019:12, 2020:45, 2021:42, 2022:50, 2023:49, 2024:56, 2025:132
+total unique publications: 406
+year-over-year growth: 2016: +67%; 2017: +40%; 2018: -29%; 2019: +140%; 2020: +275%; 2021: -7%; 2022: +19%; 2023: -2%; 2024: +14%; 2025: +136%
+2019 -> 2025 growth factor: 11.00x (CAGR +49.1% over 6 y)
+2020 -> 2025 growth factor: 2.93x (CAGR +24.0% over 5 y)
+share published 2015-2018: 4.9%
+share published 2019-2021: 24.4%
+share published 2022-2025: 70.7%
+top venues (broad):
+   49  arXiv (Cornell University)
+   12  Lecture notes in computer science
+    8  ACM Transactions on Embedded Computing Systems
+    7  IEEE Transactions on Mobile Computing
+    7  IEEE Internet of Things Journal
+    6  SSRN Electronic Journal
+    4  IEEE Transactions on Industrial Informatics
+    4  IEEE Access
+    4  Zenodo (CERN European Organization for Nuclear Research)
+    4  IEEE Transactions on Computer-Aided Design of Integrated Circuits and Systems
+top topics (broad):
+   94  Advanced Neural Network Applications
+   45  IoT and Edge/Fog Computing
+   13  Adversarial Robustness in Machine Learning
+   13  Advanced Memory and Neural Computing
+   11  Context-Aware Activity Recognition Systems
+   10  Neural Networks and Applications
+    9  Topic Modeling
+    8  Age of Information Optimization
+    7  Domain Adaptation and Few-Shot Learning
+    5  Image and Video Quality Assessment

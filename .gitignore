@@ -62,3 +62,8 @@ data/v2_assets/*.jpeg
 # owner-supplied originals + processed synthetic humans: redistribution unconfirmed, local-only
 src/v2_img/human/*.png
 data/v2_assets/generated/*.png
+
+# OpenAlex raw-response caches (rebuildable via --refetch; ~17 MB)
+experiments/lit_trend/cache/
+experiments/lit_trend/cache_v1/
+experiments/lit_trend/__pycache__/
