@@ -616,3 +616,12 @@ Nothing remains in this campaign. After the final 10W cells the board was
 rebooted back and verified at its default MODE_30W_ALL, default governor;
 INA3221 rails and `/images` re-opened for the next session (both reset again
 on any reboot).
+
+## Xavier resolution-tier addendum (2026-08-21, MODE_30W_ALL)
+
+Four catalog rows for the input-resolution knob (same checkpoints, same protocol;
+raw in `raw_catalog/`, aggregated in `jetson_catalog_summary.json`):
+dlv3_r50 fp32@512×384 373.0 ms / 4.25 J marginal (cross-checks the original
+sweep's 373.2 ms), fp16@512 84.5 ms / 0.96 J; lraspp fp32@768×576 33.9 ms /
+0.33 J, fp16@768 28.0 ms / 0.18 J. Consumed by
+`make_catalog_profile.py --extended` (docs/v3x_extensions.md §6.3).

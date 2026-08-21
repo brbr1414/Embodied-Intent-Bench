@@ -37,6 +37,7 @@ v2-real-models = ["torch>=2.2", "torchvision>=0.17"]
 # Pre-split models published by prior split-computing research (V3x model catalog).
 # Only the sc2_entropic_student backend needs this; the default suite uses fixtures.
 v2-presplit = ["torch>=2.2", "torchvision>=0.17", "sc2bench>=0.1.1"]
+v2-onnx = ["onnxruntime>=1.20"]
 
 [project.scripts]
 aerointentbench = "aerointentbench.run_benchmark:main"

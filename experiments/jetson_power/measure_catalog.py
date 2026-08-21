@@ -36,6 +36,18 @@ from pathlib import Path
 from measure import IDLE_S, MIN_ITERS, MIN_WALL_S, WARMUP, Sampler, device_string, dist, rails
 
 CKPT_DIR = Path(os.environ.get("CKPT_DIR", "/images/aerobench/sc2_ckpt"))
+QAIHUB_DIR = Path(os.environ.get("QAIHUB_DIR", "/images/aerobench/qaihub"))
+
+#: onnx workload prefix -> (qaihub model name, resolution WxH). These run the
+#: PUBLISHED Qualcomm AI Hub ONNX artifacts (float and pre-quantized w8a8) on the
+#: CPU via onnxruntime at ORT_ENABLE_BASIC -- the same execution path the
+#: benchmark's onnx_semantic_segmentation kind uses. CPU-bound by construction, so
+#: unlike the GPU workloads these genuinely vary across the core-count power modes.
+ONNX_MODELS = {
+    "onnx_dlv3plus": ("deeplabv3_plus_mobilenet", "520x520"),
+    "onnx_segformer": ("segformer_base", "512x512"),
+    "onnx_ffnet40s": ("ffnet_40s", "2048x1024"),
+}
 
 ES_CKPT = "pascal_voc2012-deeplabv3_splittable_resnet50-fp-beta{beta}_from_deeplabv3_resnet50.pt"
 GHND_CKPT = "pascal_voc2012-deeplabv3_resnet50-bq{ch}ch_from_deeplabv3_resnet50.pt"
@@ -56,6 +68,18 @@ WORKLOADS = {
         "512x384",
         "maskrcnn_resnet50_fpn onboard (catalog maskrcnn_onboard_full; min 384 / max 512)",
     ),
+    # Resolution-tier variants (2026-08-21): the input-resolution knob on the SAME
+    # checkpoints -- strong at reduced resolution, light at increased resolution.
+    "dlv3_fp32_512": ("512x384", "deeplabv3_resnet50 float32 at reduced 512x384"),
+    "dlv3_fp16_512": ("512x384", "deeplabv3_resnet50 float16 at reduced 512x384"),
+    "lraspp_fp32_768": ("768x576", "lraspp_mobilenet_v3_large float32 at increased 768x576"),
+    "lraspp_fp16_768": ("768x576", "lraspp_mobilenet_v3_large float16 at increased 768x576"),
+    "onnx_dlv3plus_w8a8": ("520x520", "QAIHub DeepLabV3+-MobileNet w8a8 ONNX (CPU EP)"),
+    "onnx_dlv3plus_float": ("520x520", "QAIHub DeepLabV3+-MobileNet float ONNX (CPU EP)"),
+    "onnx_segformer_w8a8": ("512x512", "QAIHub SegFormer-B0 ADE w8a8 ONNX (CPU EP)"),
+    "onnx_segformer_float": ("512x512", "QAIHub SegFormer-B0 ADE float ONNX (CPU EP)"),
+    "onnx_ffnet40s_w8a8": ("2048x1024", "QAIHub FFNet-40S Cityscapes w8a8 ONNX (CPU EP)"),
+    "onnx_ffnet40s_float": ("2048x1024", "QAIHub FFNet-40S Cityscapes float ONNX (CPU EP)"),
     "es_b064": ("512x384", "Entropic Student beta0.64 onboard head (catalog presplit_es_b064)"),
     "es_b512": ("512x384", "Entropic Student beta5.12 onboard head (catalog presplit_es_b512)"),
     "ghnd_bq3": ("512x384", "GHND-BQ 3ch onboard head (catalog presplit_ghnd_bq3)"),
@@ -82,6 +106,32 @@ def build_workload(workload, device):
     resolution, _ = WORKLOADS[workload]
     width, height = (int(v) for v in resolution.split("x"))
 
+    if workload.startswith("onnx_"):
+        import numpy as np
+        import onnxruntime as ort
+
+        base, precision = workload.rsplit("_", 1)
+        model_name, _ = ONNX_MODELS[base]
+        folder = f"{model_name}-onnx-{precision}"
+        path = QAIHUB_DIR / folder / folder / f"{model_name}.onnx"
+        options = ort.SessionOptions()
+        options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_BASIC
+        session = ort.InferenceSession(str(path), options, providers=["CPUExecutionProvider"])
+        inp = session.get_inputs()[0]
+        shape = [1 if isinstance(s, str) else s for s in inp.shape]
+        rng = np.random.default_rng(0)
+        if "uint8" in inp.type:
+            frame_np = rng.integers(0, 256, size=shape, dtype=np.uint8)
+        else:
+            frame_np = rng.random(shape).astype(np.float32)
+        feed = {inp.name: frame_np}
+
+        def step():
+            session.run(None, feed)
+            return None
+
+        return step, f"{shape} {inp.type} seeded random (ONNX CPU EP, ORT_ENABLE_BASIC)"
+
     if workload.startswith(("dlv3_", "lraspp_")):
         from torchvision.models import get_model, get_model_weights
 
@@ -91,7 +141,7 @@ def build_workload(workload, device):
         model = get_model(model_id, weights=get_model_weights(model_id).DEFAULT).eval().to(device)
         torch.manual_seed(0)
         frame = torch.rand(1, 3, height, width, device=device)
-        if workload.endswith("_fp16"):
+        if "_fp16" in workload:
             model = model.half()
             frame = frame.half()
 

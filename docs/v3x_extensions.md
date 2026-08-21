@@ -363,3 +363,120 @@ Findings, each labelled as behaviour of one small model on one prompt design:
 Artifacts: `results/llm_policy/` (local-only): full per-decision choices, raw
 replies, wall-clock stats, and the cost-charged variant scenario with its
 provenance note.
+
+### 6.3 Resolution tiers — the input-resolution knob as catalog rows (2026-08-21)
+
+The quantized tier stays fp16 (int8 needs TensorRT, out of scope; no published
+quantized segmentation checkpoints exist to adopt), so the honest way to widen the
+onboard strategy space is the OTHER standard runtime knob: **input resolution** on
+the same checkpoints. `make_catalog_profile.py --extended` appends four measured
+rows — strong (DeepLabV3-R50) at reduced 512×384 and light (LRASPP) at increased
+768×576, fp32/fp16 each — producing `demo_img1_model_catalog_xavier_ext.json`
+(14 configs). Xavier@MODE_30W_ALL cells (new sweep, 3 reps; dlv3_fp32@512 cross-
+checks the original sweep at 373 ms):
+
+| row | latency | E_marginal |
+|---|---|---|
+| strong fp32 @512 | 373 ms | 4.25 J |
+| strong fp16 @512 | 84.5 ms | 0.96 J |
+| light fp32 @768 | 33.9 ms | 0.33 J |
+| light fp16 @768 | 28.0 ms | 0.18 J |
+
+Grand-tour verification (real checkpoints, 14 targets, threshold 0.6):
+
+- **strong fp16@512 creates a genuine intermediate operating point**: recall
+  0.714 — a SUCCESS at less than half the strong@768 cost (0.96 J vs 2.16 J,
+  85 ms vs 168 ms), with the best battery margin among successes (+0.107 vs
+  +0.099). Under the satisficing stance this is the row a frugal policy should
+  pick when the contract asks only 0.6 — exactly the trade-off the margin vector
+  now makes visible.
+- **More pixels did not help the light model**: light fp16@768 scored recall
+  0.143, WORSE than light@512's 0.214, with more false positives. On this
+  synthetic-marker content the resolution knob is not monotone for LRASPP — a
+  domain-mismatch diagnostic (as always, never perception evidence), and a
+  caution against assuming resolution↑ ⇒ recall↑ in configured scenarios.
+- rule_based ignores the new medium-tier rows and still pins strong fp16@768
+  (recall 1.0): its tier-lexicographic escalation has no notion of "cheapest
+  row that satisfies the contract" — the first concrete policy gap the
+  resolution axis exposes.
+
+### 6.4 Published quantization: Qualcomm AI Hub ONNX rows (2026-08-21)
+
+A search for **published** quantized segmentation artifacts (the catalog rule: adopt,
+never search/quantize here) found the Qualcomm AI Hub release of
+**DeepLabV3+-MobileNet** (huggingface.co/qualcomm/DeepLabV3-Plus-MobileNet, release
+v0.60.0, Qualcomm AI Hub license): VOC2012 / 21 classes / person index 15 (same task
+convention as our torch rows), 520×520 input, downloadable ONNX in **w8a8** (uint8
+in/out) and float. torchvision itself publishes quantized weights for classification
+only — this is the closest thing to a published quantized tier for our task.
+
+New executor kind `onnx_semantic_segmentation` (`aerointentbench/v2/onnx_models.py`):
+onnxruntime lives in the `[v2-onnx]` extra, imported lazily; artifacts load
+UNMODIFIED at `ORT_ENABLE_BASIC` (full optimization trips a duplicate-node-name
+error on QAIRT QDQ exports — recorded, not patched into the artifact);
+`person_index` is a required parameter from the model card; the artifacts emit
+argmax class masks, so no probability threshold exists. CI uses an injected fake
+backend (`tests/test_onnx_models.py`). `--extended` now also appends
+`local_dlv3plus_w8a8` and `local_dlv3plus_fp32_onnx` (paired ablation) — the
+extended catalog is **16 configs**. Latency/energy on these rows are configured
+stand-ins (Mac CPU wall 146/136 ms; on Mac CPU the int8 build is NOT faster —
+the published speedups target NPUs) PENDING board measurement; note Xavier's
+py3.8 onnxruntime may not read this opset-21 export, so the board path may need
+a newer container.
+
+Grand-tour verification (real artifacts, threshold 0.6):
+
+| row | recall | precision | FP | outcome |
+|---|---|---|---|---|
+| local_dlv3plus_w8a8 | 0.571 | 0.104 | 69 | FAIL (near miss) |
+| local_dlv3plus_fp32_onnx | 0.357 | 0.278 | 13 | FAIL |
+
+Honest reading: the quantized build scores HIGHER recall than its float twin by
+firing far more (69 vs 13 false positives) — quantization noise shifts the
+operating point toward more detections on this out-of-domain content. This is an
+operating-point shift, not "quantization improves accuracy", and neither number is
+perception evidence (domain mismatch as everywhere in the catalog). What the pair
+adds to the benchmark is a THIRD onboard family (MobileNet-DeepLabV3+, between
+LRASPP and DeepLabV3-R50) with a published-precision axis and an honest
+quantization ablation.
+
+### 6.5 Second sweep of published ONNX rows: SegFormer-B0 and FFNet-40S (2026-08-21)
+
+The same Qualcomm AI Hub release train publishes float+w8a8 ONNX pairs for a whole
+segmentation line-up (SegFormer-Base, FFNet-40S/54S/78S/78S-LowRes/122NS-LowRes,
+PIDNet-S, HRNet, PSPNet, U-Net; SINet excluded — 2-class portrait matting, wrong
+task semantics). Two families were adopted as catalog rows through the existing
+`onnx_semantic_segmentation` kind (the backend now argmaxes logit-emitting exports;
+these models output `[1, C, h/4, w/4]` rather than DeepLabV3+'s argmax mask):
+
+- **SegFormer-B0** (ADE20K, 150 classes, person index 12, 3.75M params, 512×512) —
+  the transformer-architecture axis, w8a8 + float.
+- **FFNet-40S** (Cityscapes, 19 train classes, person index 11, 13.9M params,
+  2048×1024) — Qualcomm AI Research's own efficiency family, w8a8 + float. On Mac
+  CPU the w8a8 build is FASTER than float here (318 vs 408 ms) — the opposite of
+  the DeepLabV3+ pair — so int8's CPU benefit is model-dependent, another
+  operating-point fact the catalog now carries.
+
+The extended catalog is **20 configs / 6 model families**. Grand-tour verification
+(threshold 0.6):
+
+| row | recall | precision | FP | outcome |
+|---|---|---|---|---|
+| local_segformer_w8a8 | 0.786 | **0.015** | **797** | **"SUCCESS"** (min_margin +0.106) |
+| local_ffnet40s_w8a8 | 0.071 | 0.017 | 58 | FAIL (quality −1.32) |
+
+Two honest findings:
+
+- **A recall-only contract is gameable by spray.** SegFormer-w8a8 "succeeds" the
+  mission by firing constantly on out-of-domain content: 11/14 targets recalled at
+  precision 0.015, flooding the operator with 797 false detections that the
+  contract never prices (the evidence layer does charge their uplink — the FP
+  coupling from §10.9 — but the quality axis does not). This is a benchmark
+  finding about the CONTRACT VOCABULARY: mission contracts need an alarm-burden
+  axis (e.g. a false-positive bound or precision floor) before a recall threshold
+  can be read as mission quality. Candidate successor work alongside the
+  per-detection timeliness axis.
+- **Domain distance dominates architecture.** Cityscapes-trained FFNet is
+  near-blind on aerial content (0.071) while ADE-trained SegFormer fires
+  everywhere — neither number is perception evidence, but together they bracket
+  how differently "efficient segmentation" checkpoints fail off-domain.

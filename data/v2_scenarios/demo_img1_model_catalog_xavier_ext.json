@@ -1,0 +1,830 @@
+{
+  "scenario_schema_version": "2.0",
+  "scenario_id": "demo_img1_model_catalog_xavier_ext",
+  "random_seed": 42,
+  "world": {
+    "image_path": "src/v2_img/img_1.tif",
+    "source_id": "img_1",
+    "meters_per_pixel": 0.0295,
+    "invalid_pixel_rule": "all_zero",
+    "valid_region_m": [
+      260.0,
+      210.0,
+      360.0,
+      270.0
+    ]
+  },
+  "drone": {
+    "initial_position_m": [
+      280.0,
+      240.0
+    ],
+    "altitude_m": 40.0,
+    "speed_mps": 4.0,
+    "battery_capacity_wh": 6.0,
+    "flight_power_w": 126.5
+  },
+  "trajectory": {
+    "type": "lawnmower",
+    "region_m": [
+      280.0,
+      240.0,
+      340.0,
+      249.0
+    ],
+    "lane_spacing_m": 4.5
+  },
+  "camera": {
+    "projection": "orthographic",
+    "footprint_width_m": 6.0,
+    "footprint_height_m": 4.5,
+    "output_width_px": 256,
+    "output_height_px": 192
+  },
+  "simulation": {
+    "observation_interval_s": 1.0,
+    "fallback_config_id": "local_light_fp32",
+    "matching_iou_threshold": 0.3,
+    "network": {
+      "bandwidth_mbps": 20.0,
+      "rtt_ms": 30.0,
+      "packet_loss_frac": 0.0
+    },
+    "network_trace": [
+      {
+        "regime_id": "5g_good",
+        "start_s": 0.0,
+        "uplink_mbps": 100.0,
+        "downlink_mbps": 200.0,
+        "rtt_ms": 20.0,
+        "packet_loss_frac": 0.0
+      },
+      {
+        "regime_id": "lte_degraded",
+        "start_s": 12.0,
+        "uplink_mbps": 2.0,
+        "downlink_mbps": 5.0,
+        "rtt_ms": 150.0,
+        "packet_loss_frac": 0.05
+      },
+      {
+        "regime_id": "disconnected",
+        "start_s": 26.0,
+        "uplink_mbps": 0.0,
+        "downlink_mbps": 0.0,
+        "rtt_ms": 0.0,
+        "packet_loss_frac": 1.0
+      },
+      {
+        "regime_id": "recovered_weak",
+        "start_s": 38.0,
+        "uplink_mbps": 5.0,
+        "downlink_mbps": 10.0,
+        "rtt_ms": 60.0,
+        "packet_loss_frac": 0.02
+      }
+    ],
+    "telemetry": {
+      "interval_s": 1.0,
+      "report_mb": 0.001,
+      "energy_j_per_mb": 60.0,
+      "max_loss_frac": 0.5,
+      "evidence_mb_per_detection": 0.003
+    }
+  },
+  "objects": [
+    {
+      "object_id": "TGT_S1_WALK_SMALL",
+      "class_id": "person",
+      "is_target": true,
+      "render_mode": "image_asset",
+      "asset_id": "person_aerial_walking_001",
+      "position_m": [
+        296.0,
+        240.0
+      ],
+      "width_m": 0.378,
+      "height_m": 0.75,
+      "rotation_deg": 10.0,
+      "z_order": 10
+    },
+    {
+      "object_id": "TGT_S2_STAND_SMALL",
+      "class_id": "person",
+      "is_target": true,
+      "render_mode": "image_asset",
+      "asset_id": "person_aerial_standing_001",
+      "position_m": [
+        320.0,
+        240.7
+      ],
+      "width_m": 0.474,
+      "height_m": 0.75,
+      "rotation_deg": -25.0,
+      "z_order": 11
+    },
+    {
+      "object_id": "TGT_S3_WALK_SMALL",
+      "class_id": "person",
+      "is_target": true,
+      "render_mode": "image_asset",
+      "asset_id": "person_aerial_walking_001",
+      "position_m": [
+        324.5,
+        244.5
+      ],
+      "width_m": 0.378,
+      "height_m": 0.75,
+      "rotation_deg": 35.0,
+      "z_order": 12
+    },
+    {
+      "object_id": "TGT_S4_STAND_SMALL",
+      "class_id": "person",
+      "is_target": true,
+      "render_mode": "image_asset",
+      "asset_id": "person_aerial_standing_001",
+      "position_m": [
+        300.5,
+        245.1
+      ],
+      "width_m": 0.474,
+      "height_m": 0.75,
+      "rotation_deg": -10.0,
+      "z_order": 13
+    },
+    {
+      "object_id": "TGT_E1_STAND_LATE",
+      "class_id": "person",
+      "is_target": true,
+      "render_mode": "image_asset",
+      "asset_id": "person_aerial_standing_001",
+      "position_m": [
+        315.0,
+        249.0
+      ],
+      "width_m": 1.42,
+      "height_m": 2.25,
+      "rotation_deg": 20.0,
+      "z_order": 14
+    },
+    {
+      "object_id": "TGT_E2_WALK_LATE",
+      "class_id": "person",
+      "is_target": true,
+      "render_mode": "image_asset",
+      "asset_id": "person_aerial_walking_001",
+      "position_m": [
+        323.0,
+        249.6
+      ],
+      "width_m": 0.755,
+      "height_m": 1.5,
+      "rotation_deg": -30.0,
+      "z_order": 15
+    },
+    {
+      "object_id": "TGT_E3_STAND_LATE",
+      "class_id": "person",
+      "is_target": true,
+      "render_mode": "image_asset",
+      "asset_id": "person_aerial_standing_001",
+      "position_m": [
+        331.0,
+        248.4
+      ],
+      "width_m": 1.42,
+      "height_m": 2.25,
+      "rotation_deg": 45.0,
+      "z_order": 16
+    },
+    {
+      "object_id": "TGT_E4_WALK_LATE",
+      "class_id": "person",
+      "is_target": true,
+      "render_mode": "image_asset",
+      "asset_id": "person_aerial_walking_001",
+      "position_m": [
+        339.0,
+        249.0
+      ],
+      "width_m": 0.755,
+      "height_m": 1.5,
+      "rotation_deg": 15.0,
+      "z_order": 17
+    },
+    {
+      "object_id": "DIS_DEBRIS",
+      "class_id": "debris",
+      "is_target": false,
+      "render_mode": "procedural_marker",
+      "position_m": [
+        310.0,
+        244.0
+      ],
+      "width_m": 1.4,
+      "height_m": 0.9,
+      "rotation_deg": 20.0,
+      "z_order": 5,
+      "appearance": {
+        "shape": "rect",
+        "body_rgb": [
+          146,
+          95,
+          100
+        ],
+        "stripe": false,
+        "alpha": 1.0
+      }
+    }
+  ],
+  "executor_configs": [
+    {
+      "config_id": "local_light_fp32",
+      "model_strategy_id": "TORCHVISION_LRASPP_MOBILENET_V3_LARGE",
+      "kind": "torch_semantic_segmentation",
+      "mission_latency_s": 0.046,
+      "energy_j_per_call": 0.139,
+      "communication_mb_per_call": 0.0,
+      "quality_tier": "low",
+      "parameters": {
+        "model_id": "lraspp_mobilenet_v3_large",
+        "weights_id": "official_default",
+        "task_class": "person",
+        "input_width_px": 512,
+        "input_height_px": 384,
+        "probability_threshold": 0.5,
+        "device": "auto",
+        "dtype": "float32",
+        "latency_mode": "configured",
+        "warmup_runs": 1,
+        "min_component_px": 0
+      }
+    },
+    {
+      "config_id": "local_light_fp16",
+      "model_strategy_id": "TORCHVISION_LRASPP_MOBILENET_V3_LARGE_FP16",
+      "kind": "torch_semantic_segmentation",
+      "mission_latency_s": 0.028,
+      "energy_j_per_call": 0.074,
+      "communication_mb_per_call": 0.0,
+      "quality_tier": "low",
+      "parameters": {
+        "model_id": "lraspp_mobilenet_v3_large",
+        "weights_id": "official_default",
+        "task_class": "person",
+        "input_width_px": 512,
+        "input_height_px": 384,
+        "probability_threshold": 0.5,
+        "device": "auto",
+        "dtype": "float16",
+        "latency_mode": "configured",
+        "warmup_runs": 1,
+        "min_component_px": 0
+      }
+    },
+    {
+      "config_id": "local_strong_fp32",
+      "model_strategy_id": "TORCHVISION_DEEPLABV3_RESNET50",
+      "kind": "torch_semantic_segmentation",
+      "mission_latency_s": 0.734,
+      "energy_j_per_call": 8.12,
+      "communication_mb_per_call": 0.0,
+      "quality_tier": "high",
+      "parameters": {
+        "model_id": "deeplabv3_resnet50",
+        "weights_id": "official_default",
+        "task_class": "person",
+        "input_width_px": 768,
+        "input_height_px": 576,
+        "probability_threshold": 0.5,
+        "device": "auto",
+        "dtype": "float32",
+        "latency_mode": "configured",
+        "warmup_runs": 1,
+        "min_component_px": 0
+      }
+    },
+    {
+      "config_id": "local_strong_fp16",
+      "model_strategy_id": "TORCHVISION_DEEPLABV3_RESNET50_FP16",
+      "kind": "torch_semantic_segmentation",
+      "mission_latency_s": 0.167,
+      "energy_j_per_call": 2.16,
+      "communication_mb_per_call": 0.0,
+      "quality_tier": "high",
+      "parameters": {
+        "model_id": "deeplabv3_resnet50",
+        "weights_id": "official_default",
+        "task_class": "person",
+        "input_width_px": 768,
+        "input_height_px": 576,
+        "probability_threshold": 0.5,
+        "device": "auto",
+        "dtype": "float16",
+        "latency_mode": "configured",
+        "warmup_runs": 1,
+        "min_component_px": 0
+      }
+    },
+    {
+      "config_id": "remote_strong_raw",
+      "model_strategy_id": "REMOTE_DEEPLABV3_RESNET50",
+      "kind": "simulated_remote",
+      "mission_latency_s": 0.3,
+      "energy_j_per_call": 25.0,
+      "communication_mb_per_call": 1.3271,
+      "quality_tier": "high",
+      "parameters": {
+        "backend_kind": "torch_semantic_segmentation",
+        "backend_model_id": "deeplabv3_resnet50",
+        "backend_weights_id": "official_default",
+        "backend_task_class": "person",
+        "backend_input_width_px": 768,
+        "backend_input_height_px": 576,
+        "backend_probability_threshold": 0.5,
+        "backend_device": "auto",
+        "backend_dtype": "float32",
+        "backend_latency_mode": "configured",
+        "backend_warmup_runs": 1,
+        "backend_min_component_px": 0,
+        "remote_compute_s": 0.35,
+        "timeout_s": 3.0,
+        "fallback_config_id": "local_light_fp32",
+        "download_mb_per_call": 0.05,
+        "uplink_energy_j_per_mb": 60.0,
+        "downlink_energy_j_per_mb": 1.0,
+        "radio_activation_j": 0.5
+      }
+    },
+    {
+      "config_id": "presplit_es_b064",
+      "model_strategy_id": "ES_DLV3_R50_BETA0.64",
+      "kind": "pretrained_split",
+      "mission_latency_s": 0.4,
+      "energy_j_per_call": 0.092,
+      "communication_mb_per_call": 0.0126,
+      "quality_tier": "medium",
+      "parameters": {
+        "split_backend": "sc2_entropic_student",
+        "split_source": "paper",
+        "split_source_reference": "Matsubara et al., 'SC2 Benchmark: Supervised Compression for Split Computing', TMLR 2023 (method: Entropic Student, Matsubara et al., WACV 2022); checkpoints: github.com/yoshitomo-matsubara/sc2-benchmark release v0.0.3, MIT license",
+        "split_location": "FPBasedResNetBottleneck replaces ResNet-50 conv1..layer1; the trained encoder (head, ~0.14M params) runs onboard, the entropy-coded 24-channel latent crosses the link, and the decoder + layer2..4 + DeepLabV3 head run on the server",
+        "checkpoint_path": "~/.cache/sc2-benchmark/resource/ckpt/pascal_voc2012/supervised_compression/entropic_student/pascal_voc2012-deeplabv3_splittable_resnet50-fp-beta0.64_from_deeplabv3_resnet50.pt",
+        "input_width_px": 512,
+        "input_height_px": 384,
+        "device": "cpu",
+        "head_latency_s": 0.069,
+        "remote_compute_s": 0.2,
+        "timeout_s": 3.0,
+        "fallback_config_id": "local_light_fp32",
+        "download_mb_per_call": 0.03,
+        "uplink_energy_j_per_mb": 60.0,
+        "downlink_energy_j_per_mb": 1.0,
+        "radio_activation_j": 0.5
+      }
+    },
+    {
+      "config_id": "presplit_es_b512",
+      "model_strategy_id": "ES_DLV3_R50_BETA5.12",
+      "kind": "pretrained_split",
+      "mission_latency_s": 0.4,
+      "energy_j_per_call": 0.082,
+      "communication_mb_per_call": 0.0011,
+      "quality_tier": "low",
+      "parameters": {
+        "split_backend": "sc2_entropic_student",
+        "split_source": "paper",
+        "split_source_reference": "Matsubara et al., 'SC2 Benchmark: Supervised Compression for Split Computing', TMLR 2023 (method: Entropic Student, Matsubara et al., WACV 2022); checkpoints: github.com/yoshitomo-matsubara/sc2-benchmark release v0.0.3, MIT license",
+        "split_location": "FPBasedResNetBottleneck replaces ResNet-50 conv1..layer1; the trained encoder (head, ~0.14M params) runs onboard, the entropy-coded 24-channel latent crosses the link, and the decoder + layer2..4 + DeepLabV3 head run on the server",
+        "checkpoint_path": "~/.cache/sc2-benchmark/resource/ckpt/pascal_voc2012/supervised_compression/entropic_student/pascal_voc2012-deeplabv3_splittable_resnet50-fp-beta5.12_from_deeplabv3_resnet50.pt",
+        "input_width_px": 512,
+        "input_height_px": 384,
+        "device": "cpu",
+        "head_latency_s": 0.086,
+        "remote_compute_s": 0.2,
+        "timeout_s": 3.0,
+        "fallback_config_id": "local_light_fp32",
+        "download_mb_per_call": 0.03,
+        "uplink_energy_j_per_mb": 60.0,
+        "downlink_energy_j_per_mb": 1.0,
+        "radio_activation_j": 0.5
+      }
+    },
+    {
+      "config_id": "presplit_ghnd_bq3",
+      "model_strategy_id": "GHND_BQ3_DLV3_R50",
+      "kind": "pretrained_split",
+      "mission_latency_s": 0.4,
+      "energy_j_per_call": 0.074,
+      "communication_mb_per_call": 0.0396,
+      "quality_tier": "medium",
+      "parameters": {
+        "split_backend": "sc2_ghnd_bq",
+        "split_source": "paper",
+        "split_source_reference": "Matsubara et al., 'Head Network Distillation: Splitting Distilled Deep Neural Networks for Resource-constrained Edge Computing Systems', IEEE Access 2020; bottleneck architecture: Matsubara & Levorato, 'Neural Compression and Filtering for Edge-assisted Real-time Object Detection in Challenged Networks', 2021; checkpoints: github.com/yoshitomo-matsubara/sc2-benchmark release v0.0.3, MIT",
+        "split_location": "GHND bottleneck replaces ResNet-50 conv1..layer1; encoder (head) onboard, 8-bit bottleneck-quantized 3-channel latent on the wire (no entropy coding), decoder + layer2..4 + DeepLabV3 head on the server",
+        "checkpoint_path": "~/.cache/sc2-benchmark/resource/ckpt/pascal_voc2012/supervised_compression/ghnd-bq/pascal_voc2012-deeplabv3_resnet50-bq3ch_from_deeplabv3_resnet50.pt",
+        "bottleneck_channels": 3,
+        "input_width_px": 512,
+        "input_height_px": 384,
+        "device": "cpu",
+        "head_latency_s": 0.028,
+        "remote_compute_s": 0.2,
+        "timeout_s": 3.0,
+        "fallback_config_id": "local_light_fp32",
+        "download_mb_per_call": 0.03,
+        "uplink_energy_j_per_mb": 60.0,
+        "downlink_energy_j_per_mb": 1.0,
+        "radio_activation_j": 0.5
+      }
+    },
+    {
+      "config_id": "maskrcnn_onboard_full",
+      "model_strategy_id": "MASKRCNN_R50_FPN",
+      "kind": "torch_instance_segmentation",
+      "mission_latency_s": 0.2,
+      "energy_j_per_call": 2.022,
+      "communication_mb_per_call": 0.0,
+      "quality_tier": "high",
+      "parameters": {
+        "score_threshold": 0.5,
+        "input_min_size_px": 384,
+        "input_max_size_px": 512,
+        "device": "cpu",
+        "latency_mode": "configured"
+      }
+    },
+    {
+      "config_id": "presplit_maskrcnn_fcm",
+      "model_strategy_id": "MASKRCNN_R50_FPN_FCM_SPLIT",
+      "kind": "pretrained_split",
+      "mission_latency_s": 0.8,
+      "energy_j_per_call": 0.835,
+      "communication_mb_per_call": 4.19,
+      "quality_tier": "high",
+      "parameters": {
+        "split_backend": "fcm_maskrcnn_fpn",
+        "split_source": "paper",
+        "split_source_reference": "MPEG FCM (Feature Coding for Machines) split-inference test point for R-CNN models, implemented by CompressAI-Vision (InterDigital), arXiv:2509.20777; weights: torchvision maskrcnn_resnet50_fpn official DEFAULT (COCO)",
+        "split_location": "split at the FPN outputs: backbone+FPN (head) onboard, multi-scale P-layer feature tensors on the wire, RPN + ROI heads on the server. Feature reduction here is per-tensor uint8 affine (the standard's FCTM/VVC feature codec is out of scope) -- the payload gap vs a trained bottleneck is a finding, not a defect",
+        "score_threshold": 0.5,
+        "input_min_size_px": 384,
+        "input_max_size_px": 512,
+        "device": "cpu",
+        "feature_dtype": "uint8",
+        "head_latency_s": 0.099,
+        "remote_compute_s": 0.3,
+        "timeout_s": 3.0,
+        "fallback_config_id": "local_light_fp32",
+        "download_mb_per_call": 0.03,
+        "uplink_energy_j_per_mb": 60.0,
+        "downlink_energy_j_per_mb": 1.0,
+        "radio_activation_j": 0.5
+      }
+    },
+    {
+      "config_id": "local_strong_fp32_512",
+      "model_strategy_id": "TORCHVISION_DEEPLABV3_RESNET50_512",
+      "kind": "torch_semantic_segmentation",
+      "mission_latency_s": 0.373,
+      "energy_j_per_call": 4.247,
+      "communication_mb_per_call": 0.0,
+      "quality_tier": "medium",
+      "parameters": {
+        "model_id": "deeplabv3_resnet50",
+        "weights_id": "official_default",
+        "task_class": "person",
+        "input_width_px": 512,
+        "input_height_px": 384,
+        "probability_threshold": 0.5,
+        "device": "auto",
+        "dtype": "float32",
+        "latency_mode": "configured",
+        "warmup_runs": 1,
+        "min_component_px": 0
+      }
+    },
+    {
+      "config_id": "local_strong_fp16_512",
+      "model_strategy_id": "TORCHVISION_DEEPLABV3_RESNET50_FP16_512",
+      "kind": "torch_semantic_segmentation",
+      "mission_latency_s": 0.085,
+      "energy_j_per_call": 0.959,
+      "communication_mb_per_call": 0.0,
+      "quality_tier": "medium",
+      "parameters": {
+        "model_id": "deeplabv3_resnet50",
+        "weights_id": "official_default",
+        "task_class": "person",
+        "input_width_px": 512,
+        "input_height_px": 384,
+        "probability_threshold": 0.5,
+        "device": "auto",
+        "dtype": "float16",
+        "latency_mode": "configured",
+        "warmup_runs": 1,
+        "min_component_px": 0
+      }
+    },
+    {
+      "config_id": "local_light_fp32_768",
+      "model_strategy_id": "TORCHVISION_LRASPP_MOBILENET_V3_LARGE_768",
+      "kind": "torch_semantic_segmentation",
+      "mission_latency_s": 0.034,
+      "energy_j_per_call": 0.326,
+      "communication_mb_per_call": 0.0,
+      "quality_tier": "medium",
+      "parameters": {
+        "model_id": "lraspp_mobilenet_v3_large",
+        "weights_id": "official_default",
+        "task_class": "person",
+        "input_width_px": 768,
+        "input_height_px": 576,
+        "probability_threshold": 0.5,
+        "device": "auto",
+        "dtype": "float32",
+        "latency_mode": "configured",
+        "warmup_runs": 1,
+        "min_component_px": 0
+      }
+    },
+    {
+      "config_id": "local_light_fp16_768",
+      "model_strategy_id": "TORCHVISION_LRASPP_MOBILENET_V3_LARGE_FP16_768",
+      "kind": "torch_semantic_segmentation",
+      "mission_latency_s": 0.028,
+      "energy_j_per_call": 0.176,
+      "communication_mb_per_call": 0.0,
+      "quality_tier": "medium",
+      "parameters": {
+        "model_id": "lraspp_mobilenet_v3_large",
+        "weights_id": "official_default",
+        "task_class": "person",
+        "input_width_px": 768,
+        "input_height_px": 576,
+        "probability_threshold": 0.5,
+        "device": "auto",
+        "dtype": "float16",
+        "latency_mode": "configured",
+        "warmup_runs": 1,
+        "min_component_px": 0
+      }
+    },
+    {
+      "config_id": "local_dlv3plus_w8a8",
+      "model_strategy_id": "QAIHUB_DLV3PLUS_MOBILENET_W8A8",
+      "kind": "onnx_semantic_segmentation",
+      "mission_latency_s": 0.146,
+      "energy_j_per_call": 1.0,
+      "communication_mb_per_call": 0.0,
+      "quality_tier": "medium",
+      "parameters": {
+        "model_path": "~/.cache/qaihub/deeplabv3_plus_mobilenet-onnx-w8a8/deeplabv3_plus_mobilenet-onnx-w8a8/deeplabv3_plus_mobilenet.onnx",
+        "person_index": 15,
+        "input_width_px": 520,
+        "input_height_px": 520,
+        "latency_mode": "configured",
+        "min_component_px": 0,
+        "quantization_source": "Qualcomm AI Hub 'DeepLabV3-Plus-MobileNet' release v0.60.0 (huggingface.co/qualcomm/DeepLabV3-Plus-MobileNet; Qualcomm AI Hub license); VOC2012, 21 classes, person index 15 from the model card; ONNX asset run unmodified via onnxruntime CPU EP at ORT_ENABLE_BASIC; precision w8a8 (published)"
+      }
+    },
+    {
+      "config_id": "local_dlv3plus_fp32_onnx",
+      "model_strategy_id": "QAIHUB_DLV3PLUS_MOBILENET_FLOAT",
+      "kind": "onnx_semantic_segmentation",
+      "mission_latency_s": 0.136,
+      "energy_j_per_call": 1.2,
+      "communication_mb_per_call": 0.0,
+      "quality_tier": "medium",
+      "parameters": {
+        "model_path": "~/.cache/qaihub/deeplabv3_plus_mobilenet-onnx-float/deeplabv3_plus_mobilenet-onnx-float/deeplabv3_plus_mobilenet.onnx",
+        "person_index": 15,
+        "input_width_px": 520,
+        "input_height_px": 520,
+        "latency_mode": "configured",
+        "min_component_px": 0,
+        "quantization_source": "Qualcomm AI Hub 'DeepLabV3-Plus-MobileNet' release v0.60.0 (huggingface.co/qualcomm/DeepLabV3-Plus-MobileNet; Qualcomm AI Hub license); VOC2012, 21 classes, person index 15 from the model card; ONNX asset run unmodified via onnxruntime CPU EP at ORT_ENABLE_BASIC; precision float (paired ablation row)"
+      }
+    },
+    {
+      "config_id": "local_segformer_w8a8",
+      "model_strategy_id": "QAIHUB_SEGFORMER_B0_ADE_W8A8",
+      "kind": "onnx_semantic_segmentation",
+      "mission_latency_s": 0.098,
+      "energy_j_per_call": 0.8,
+      "communication_mb_per_call": 0.0,
+      "quality_tier": "medium",
+      "parameters": {
+        "model_path": "~/.cache/qaihub/segformer_base-onnx-w8a8/segformer_base-onnx-w8a8/segformer_base.onnx",
+        "person_index": 12,
+        "input_width_px": 512,
+        "input_height_px": 512,
+        "latency_mode": "configured",
+        "min_component_px": 0,
+        "quantization_source": "Qualcomm AI Hub 'segformer_base' release v0.60.0 (huggingface.co/qualcomm; Qualcomm AI Hub license); SegFormer-B0 fine-tuned on ADE20K, 150 classes, person index 12 (3.75M params); ONNX w8a8 run unmodified via onnxruntime CPU EP at ORT_ENABLE_BASIC"
+      }
+    },
+    {
+      "config_id": "local_segformer_fp32_onnx",
+      "model_strategy_id": "QAIHUB_SEGFORMER_B0_ADE_FLOAT",
+      "kind": "onnx_semantic_segmentation",
+      "mission_latency_s": 0.069,
+      "energy_j_per_call": 0.9,
+      "communication_mb_per_call": 0.0,
+      "quality_tier": "medium",
+      "parameters": {
+        "model_path": "~/.cache/qaihub/segformer_base-onnx-float/segformer_base-onnx-float/segformer_base.onnx",
+        "person_index": 12,
+        "input_width_px": 512,
+        "input_height_px": 512,
+        "latency_mode": "configured",
+        "min_component_px": 0,
+        "quantization_source": "Qualcomm AI Hub 'segformer_base' release v0.60.0 (huggingface.co/qualcomm; Qualcomm AI Hub license); SegFormer-B0 fine-tuned on ADE20K, 150 classes, person index 12 (3.75M params); ONNX float run unmodified via onnxruntime CPU EP at ORT_ENABLE_BASIC"
+      }
+    },
+    {
+      "config_id": "local_ffnet40s_w8a8",
+      "model_strategy_id": "QAIHUB_FFNET_40S_CITYSCAPES_W8A8",
+      "kind": "onnx_semantic_segmentation",
+      "mission_latency_s": 0.318,
+      "energy_j_per_call": 3.0,
+      "communication_mb_per_call": 0.0,
+      "quality_tier": "medium",
+      "parameters": {
+        "model_path": "~/.cache/qaihub/ffnet_40s-onnx-w8a8/ffnet_40s-onnx-w8a8/ffnet_40s.onnx",
+        "person_index": 11,
+        "input_width_px": 2048,
+        "input_height_px": 1024,
+        "latency_mode": "configured",
+        "min_component_px": 0,
+        "quantization_source": "Qualcomm AI Hub 'ffnet_40s' release v0.60.0 (huggingface.co/qualcomm; Qualcomm AI Hub license); FFNet-40S on Cityscapes, 19 train classes, person index 11 (13.9M params); ONNX w8a8 run unmodified via onnxruntime CPU EP at ORT_ENABLE_BASIC; w8a8 measured FASTER than float on Mac CPU (318 vs 408 ms)"
+      }
+    },
+    {
+      "config_id": "local_ffnet40s_fp32_onnx",
+      "model_strategy_id": "QAIHUB_FFNET_40S_CITYSCAPES_FLOAT",
+      "kind": "onnx_semantic_segmentation",
+      "mission_latency_s": 0.408,
+      "energy_j_per_call": 3.6,
+      "communication_mb_per_call": 0.0,
+      "quality_tier": "medium",
+      "parameters": {
+        "model_path": "~/.cache/qaihub/ffnet_40s-onnx-float/ffnet_40s-onnx-float/ffnet_40s.onnx",
+        "person_index": 11,
+        "input_width_px": 2048,
+        "input_height_px": 1024,
+        "latency_mode": "configured",
+        "min_component_px": 0,
+        "quantization_source": "Qualcomm AI Hub 'ffnet_40s' release v0.60.0 (huggingface.co/qualcomm; Qualcomm AI Hub license); FFNet-40S on Cityscapes, 19 train classes, person index 11 (13.9M params); ONNX float run unmodified via onnxruntime CPU EP at ORT_ENABLE_BASIC"
+      }
+    }
+  ],
+  "mission_contract": {
+    "contract_id": "V2_MODEL_CATALOG_CONTRACT_XAVIER_EXT",
+    "quality_metric": "target_recall",
+    "quality_operator": ">=",
+    "quality_threshold": 0.7,
+    "deadline_s": 55.0,
+    "communication_budget_mb": 26.0,
+    "min_final_battery_frac": 0.17,
+    "privacy_level": "features_only"
+  },
+  "provenance": {
+    "label": "synthetic deployment-matrix mission diagnostic (features_only privacy)",
+    "assets": "OpenAI-generated synthetic humans (owner-supplied); NOT real people, NOT real aerial data",
+    "note": "local/head latency and energy are bench measurements of inference on a devkit (no flight load, no radio, lab thermals); results are still mission-simulation diagnostics, never real-UAV performance",
+    "design": "model catalog: model_family x execution_mode, policy selects one config_id. Family deeplabv3_resnet50: onboard fp32, onboard fp16 (reduced precision via the torch kind's dtype knob; int8 needs TensorRT and stays out of scope), raw-RGB full offload (deliberately privacy-forbidden under this features_only contract), and TWO predefined-split tiers (pretrained_split kind): Entropic Student DeepLabV3-R50 beta 0.64 / 5.12 from the SC2 benchmark -- the split point is the SOURCE PAPER'S, adopted as a fixed catalog option, never searched or tuned here (provenance embedded per config). Family lraspp_mobilenet_v3_large: onboard fp32 / fp16 only -- no published split configuration for this architecture was found, and inventing one is forbidden, so the family honestly lacks a split tier. Wire payloads for pretrained_split are priced from the entropy-coded bitstream the head actually produces per frame (communication_mb_per_call is the nominal documentation value, measured on this world's frames at 512x384 input on CPU); head_latency_s, energy_j_per_call (head), and remote_compute_s are CONFIGURED mission-scale placeholders PENDING board measurement (the sc2 encoder is ~0.14M params). The checkpoints are local-only (gitignored cache), like the model-zoo weights. VOC-trained checkpoints on synthetic aerial markers are a documented domain mismatch (as in V2.1): this scenario exercises the catalog/accounting/privacy semantics, not attainable perception quality. EXTENDED 2026-08-11: three more catalog rows. presplit_ghnd_bq3 = the SC2 release's second published method family (GHND bottleneck + 8-bit quantization, no entropy coding; measured 39.6 KB on this world's frames -- vs 12.6 KB entropic-coded, the honest cost of skipping the entropy coder). maskrcnn_onboard_full + presplit_maskrcnn_fcm = a second MODEL FAMILY (instance segmentation, torchvision official COCO weights): full onboard, and split at the MPEG FCM standard FPN test point (uint8-reduced features measured 4.19 MB -- the standard's learned feature codec is out of scope, and the resulting payload gap vs trained bottlenecks is a finding). A float32 FCM split reproduces the onboard model's mask exactly (pinned by the opt-in real-model test). Mask R-CNN costs are configured mission-scale placeholders pending board measurement, like the other rows. HARDWARE-GROUNDED VARIANT (MODE_30W_ALL): onboard mission_latency_s / energy_j_per_call and split-head head_latency_s / energy_j_per_call are MEASURED ABSOLUTE values (Jetson AGX Xavier 32GB, INA3221 module rails, marginal energy = run minus same-invocation idle, 3 repeats/cell, 2026-08-13/14 catalog campaign, experiments/jetson_power/RESULTS.md); heads are transcriptions pinned byte-identical to the real backends (verify_heads.py). The measured idle floor (6.5 W mode mean) is folded into flight_power_w. Split payload sizes keep the mission-frame measurements (sweep random-input payloads recorded in hardware_grounding). Server-side and radio terms stay configured.",
+    "hardware_grounding": {
+      "board": "Jetson AGX Xavier 32GB, MODE_30W_ALL, default DVFS governor",
+      "measured_on": "2026-08-13/14",
+      "source_summary": "results/jetson_power_xavier/jetson_catalog_summary.json",
+      "grounded_values": {
+        "local_light_fp32": {
+          "mission_latency_s": 0.046,
+          "latency_rep_std_ms": 35.6,
+          "energy_j_per_call": 0.139,
+          "source_cell": "MODE_30W_ALL/lraspp_fp32"
+        },
+        "local_light_fp16": {
+          "mission_latency_s": 0.028,
+          "latency_rep_std_ms": 3.8,
+          "energy_j_per_call": 0.074,
+          "source_cell": "MODE_30W_ALL/lraspp_fp16"
+        },
+        "local_strong_fp32": {
+          "mission_latency_s": 0.734,
+          "latency_rep_std_ms": 0.1,
+          "energy_j_per_call": 8.12,
+          "source_cell": "MODE_30W_ALL/dlv3_fp32"
+        },
+        "local_strong_fp16": {
+          "mission_latency_s": 0.167,
+          "latency_rep_std_ms": 0.0,
+          "energy_j_per_call": 2.16,
+          "source_cell": "MODE_30W_ALL/dlv3_fp16"
+        },
+        "presplit_es_b064": {
+          "head_latency_s": 0.069,
+          "latency_rep_std_ms": 15.3,
+          "energy_j_per_call": 0.092,
+          "payload_note": "communication_mb_per_call kept at the mission-frame measurement; sweep random-input payload was 21.5 KB",
+          "source_cell": "MODE_30W_ALL/es_b064"
+        },
+        "presplit_es_b512": {
+          "head_latency_s": 0.086,
+          "latency_rep_std_ms": 24.5,
+          "energy_j_per_call": 0.082,
+          "payload_note": "communication_mb_per_call kept at the mission-frame measurement; sweep random-input payload was 2.3 KB",
+          "source_cell": "MODE_30W_ALL/es_b512"
+        },
+        "presplit_ghnd_bq3": {
+          "head_latency_s": 0.028,
+          "latency_rep_std_ms": 31.7,
+          "energy_j_per_call": 0.074,
+          "payload_note": "communication_mb_per_call kept at the mission-frame measurement; sweep random-input payload was 39.6 KB",
+          "source_cell": "MODE_30W_ALL/ghnd_bq3"
+        },
+        "maskrcnn_onboard_full": {
+          "mission_latency_s": 0.2,
+          "latency_rep_std_ms": 0.1,
+          "energy_j_per_call": 2.022,
+          "source_cell": "MODE_30W_ALL/maskrcnn"
+        },
+        "presplit_maskrcnn_fcm": {
+          "head_latency_s": 0.099,
+          "latency_rep_std_ms": 19.0,
+          "energy_j_per_call": 0.835,
+          "payload_note": "communication_mb_per_call kept at the mission-frame measurement; sweep random-input payload was 4190.2 KB",
+          "source_cell": "MODE_30W_ALL/fcm_head"
+        },
+        "local_strong_fp32_512": {
+          "mission_latency_s": 0.373,
+          "energy_j_per_call": 4.247,
+          "source_cell": "MODE_30W_ALL/(resolution-tier sweep)"
+        },
+        "local_strong_fp16_512": {
+          "mission_latency_s": 0.085,
+          "energy_j_per_call": 0.959,
+          "source_cell": "MODE_30W_ALL/(resolution-tier sweep)"
+        },
+        "local_light_fp32_768": {
+          "mission_latency_s": 0.034,
+          "energy_j_per_call": 0.326,
+          "source_cell": "MODE_30W_ALL/(resolution-tier sweep)"
+        },
+        "local_light_fp16_768": {
+          "mission_latency_s": 0.028,
+          "energy_j_per_call": 0.176,
+          "source_cell": "MODE_30W_ALL/(resolution-tier sweep)"
+        },
+        "local_dlv3plus_w8a8": {
+          "mission_latency_s": 0.146,
+          "energy_j_per_call": 1.0,
+          "source_cell": "CONFIGURED STAND-IN (Mac CPU wall-clock; energy designed) \u2014 PENDING board measurement"
+        },
+        "local_dlv3plus_fp32_onnx": {
+          "mission_latency_s": 0.136,
+          "energy_j_per_call": 1.2,
+          "source_cell": "CONFIGURED STAND-IN (Mac CPU wall-clock; energy designed) \u2014 PENDING board measurement"
+        },
+        "local_segformer_w8a8": {
+          "mission_latency_s": 0.098,
+          "energy_j_per_call": 0.8,
+          "source_cell": "CONFIGURED STAND-IN (Mac CPU wall-clock; energy designed) \u2014 PENDING board measurement"
+        },
+        "local_segformer_fp32_onnx": {
+          "mission_latency_s": 0.069,
+          "energy_j_per_call": 0.9,
+          "source_cell": "CONFIGURED STAND-IN (Mac CPU wall-clock; energy designed) \u2014 PENDING board measurement"
+        },
+        "local_ffnet40s_w8a8": {
+          "mission_latency_s": 0.318,
+          "energy_j_per_call": 3.0,
+          "source_cell": "CONFIGURED STAND-IN (Mac CPU wall-clock; energy designed) \u2014 PENDING board measurement"
+        },
+        "local_ffnet40s_fp32_onnx": {
+          "mission_latency_s": 0.408,
+          "energy_j_per_call": 3.6,
+          "source_cell": "CONFIGURED STAND-IN (Mac CPU wall-clock; energy designed) \u2014 PENDING board measurement"
+        }
+      },
+      "flight_power_w": {
+        "base_flight_fiction_w": 120.0,
+        "measured_idle_floor_w": 6.5
+      },
+      "dvfs_note": "MODE_30W_ALL shows governor-entangled latency jitter on light workloads (A7); per-cell rep std is recorded above and not smoothed away",
+      "still_configured": [
+        "mission_latency_s on pretrained_split rows (policy-visible expectation; executed latency is derived)",
+        "remote_compute_s and server energy (all remote/split rows)",
+        "uplink/downlink energy_j_per_mb and radio_activation_j (B4: TX not measurable)",
+        "download_mb_per_call",
+        "telemetry energy_j_per_mb",
+        "battery_capacity_wh (designed mission stress, unchanged from base)",
+        "flight base power 120 W (flight fiction)"
+      ]
+    }
+  },
+  "evaluation_purpose": "controlled_observability",
+  "assets_manifest": "data/v2_assets/manifest.json"
+}

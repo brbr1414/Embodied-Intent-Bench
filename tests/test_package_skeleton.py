@@ -98,7 +98,8 @@ def test_v2_subpackage_only_uses_its_declared_extras() -> None:
     # extras, imported lazily inside the real-model backend only (the module imports
     # them function-level, so importing aerointentbench.v2.real_models without them
     # still works until a torch executor is actually constructed); sc2bench is the
-    # [v2-presplit] extra, imported lazily inside the sc2 backend only.
+    # [v2-presplit] extra, imported lazily inside the sc2 backend only; onnxruntime is
+    # the [v2-onnx] extra, imported lazily inside the ONNX backend only.
     allowed = sys.stdlib_module_names | {
         "aerointentbench",
         "numpy",
@@ -107,6 +108,7 @@ def test_v2_subpackage_only_uses_its_declared_extras() -> None:
         "torch",
         "torchvision",
         "sc2bench",
+        "onnxruntime",
     }
     for module_path in modules:
         for root in _imported_root_modules(module_path.read_text(encoding="utf-8")):

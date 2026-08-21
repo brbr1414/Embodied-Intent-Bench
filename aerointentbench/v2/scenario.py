@@ -193,6 +193,7 @@ _EXECUTOR_KINDS: Final = (
     "slow_strong",
     "torch_semantic_segmentation",
     "torch_instance_segmentation",
+    "onnx_semantic_segmentation",
     "simulated_remote",
     "simulated_split",
     "pretrained_split",
@@ -780,6 +781,10 @@ def _read_executors(reader: DocumentReader) -> tuple[ExecutorConfigSpec, ...]:
             from aerointentbench.v2.instance_models import validate_instance_parameters
 
             validate_instance_parameters(parameters, entry.context)
+        if kind == "onnx_semantic_segmentation":
+            from aerointentbench.v2.onnx_models import validate_onnx_parameters
+
+            validate_onnx_parameters(parameters, entry.context)
         if kind == "simulated_remote":
             _validate_remote_parameters(parameters, entry.context)
         if kind == "simulated_split":
