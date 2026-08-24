@@ -625,3 +625,123 @@ dlv3_r50 fp32@512×384 373.0 ms / 4.25 J marginal (cross-checks the original
 sweep's 373.2 ms), fp16@512 84.5 ms / 0.96 J; lraspp fp32@768×576 33.9 ms /
 0.33 J, fp16@768 28.0 ms / 0.18 J. Consumed by
 `make_catalog_profile.py --extended` (docs/v3x_extensions.md §6.3).
+
+# Xavier extended-catalog campaign (2026-08-21→24) — ONNX rows CPU-side, all live modes
+
+The resolution tiers (7 remaining modes) and the six published ONNX rows
+(DeepLabV3+-MobileNet / SegFormer-B0 / FFNet-40S, w8a8+float) measured across the
+seven live power modes: 198 cells, 3 reps each, resumable driver
+(`run_catalog_ext.sh`), raws in `raw_catalog/`, aggregate in
+`jetson_catalog_summary.json`. **MODE_10W completed 2026-08-24** with two
+owner-run reboots (30 more cells): ONNX rows stretch to 3.4–8.9 s (w8a8 slower
+than float here too — the int8 loss now holds across ALL EIGHT modes), and
+FFNet-w8a8 reaches 50.7 J TOTAL per frame at 10 W — the power-cap paradox
+(idle accruing over a stretched inference) at its extreme. Resolution tiers at
+10 W: dlv3 fp32@512 1237 ms / fp16@512 241 ms, lraspp fp32@768 93 ms /
+fp16@768 61 ms. ONNX cells run onnxruntime **1.18.1** CPU EP at
+ORT_ENABLE_BASIC — the same execution path as the benchmark's
+`onnx_semantic_segmentation` kind.
+
+Headline rows (E_marginal J/inf; latency ms):
+
+| workload | 2CORE | 4CORE | 6CORE | 30W_ALL | MAXN |
+|---|---|---|---|---|---|
+| onnx_dlv3plus w8a8 | 3073 / 5.69 | 1769 / 4.05 | 1651 / 3.18 | 932 / 2.34 | 487 / 4.20 |
+| onnx_dlv3plus float | 2655 / 5.06 | 1571 / 3.64 | 1441 / 2.84 | 826 / 2.10 | 438 / 3.81 |
+| onnx_segformer w8a8 | 3439 / 5.87 | 2001 / 4.23 | 1848 / 3.36 | 820 / 1.93 | 454 / 3.18 |
+| onnx_segformer float | 2172 / 3.77 | 1278 / 2.58 | 1170 / 1.99 | 594 / 1.24 | 331 / 1.92 |
+| onnx_ffnet40s w8a8 | 5118 / 9.88 | 3144 / 7.71 | 3090 / 5.93 | 1855 / 4.77 | 991 / 8.80 |
+| onnx_ffnet40s float | 4658 / 9.07 | 2887 / 7.15 | 2828 / 5.73 | 1729 / 4.29 | 916 / 8.11 |
+
+Findings:
+
+1. **Published w8a8 is SLOWER than float in every mode, for every model, on this
+   board's CPU runtime** (worst: SegFormer, ×1.38 at 30W_ALL). The Mac CPU had
+   shown a model-dependent split (FFNet faster, DeepLabV3+ slower); the
+   deployment board settles it as a uniform loss — the published quantization's
+   latency benefit targets NPUs, and adopting the artifact does not import the
+   accelerator it was quantized for. (Direct sibling of the FCM finding: a
+   standard's split point does not import its codec.)
+2. **The core-count power modes finally matter.** GPU workloads tie across the
+   30W variants (734 ms all four); the CPU-bound ONNX rows scale ×3.3 from
+   2CORE to 30W_ALL — mode choice and execution stack interact, and a policy
+   that could pick power modes would face a genuinely different landscape for
+   ONNX rows than for CUDA rows.
+3. MAXN trades energy for latency on CPU rows too (fastest everywhere, but
+   marginal J/inf roughly doubles vs 30W_ALL — the 10.8 W idle floor and higher
+   CPU clocks both bill the same inference).
+4. Mission-scale consequence (grounded into `demo_img1_model_catalog_xavier_ext`):
+   at 30W_ALL the ONNX rows are 0.59–1.86 s tiers — FFNet now skips every other
+   1 Hz slot, and every ONNX row is slower AND costlier than the CUDA
+   `local_strong_fp16` (0.167 s / 2.16 J), so their catalog role is honest
+   diversity (architecture + published-precision axes), not Pareto competitiveness.
+
+Operational note: the campaign hit two incidents, both recorded — a double
+launch (guard added; contaminated cells wiped and re-measured) and onnxruntime
+1.19.2 aborting with a C++ vector assertion whenever a power mode takes CPU
+cores offline (fixed by pinning 1.18.1; reproduces on 6CORE/4CORE/2CORE/15W).
+
+## Xavier LLM policy decision cost (2026-08-24, MODE_30W_ALL)
+
+First board measurement of what the LLM policy's own decision costs
+(`measure_llm_policy.py`; representative mission prompt — grand-tour template,
+~900 tokens, 20 option ids; INA3221 protocol as everywhere; fp16 CUDA,
+transformers 4.46 on the board stack; results in
+`results/jetson_power_xavier/llm_policy_cost/`):
+
+| model | mode | s/decision | E_total | E_marginal |
+|---|---|---|---|---|
+| Qwen2.5-0.5B | choice (20 fwd) | 8.95 | 177 J | 122.6 J |
+| Qwen2.5-0.5B | generate (greedy 24 tok) | 1.08 | 14.5 J | 7.6 J |
+| Qwen2.5-1.5B | choice | 17.60 | 325 J | 217.3 J |
+| Qwen2.5-1.5B | generate | 3.68 | 51.2 J | 28.5 J |
+
+Readings:
+
+1. **On the deployment board, one 1.5B choice-mode decision costs ~100× the
+   perception inference it selects** (217 J vs strong-fp16's 2.16 J), and a
+   440-decision grand tour at that rate would burn ≈26.6 Wh on decisions alone
+   — more than the mission's whole 21 Wh battery. The Mac diagnostic (3.31 s)
+   understated the board latency ×5.3.
+2. Generate mode is the only remotely deployable shape (0.5B: 1.08 s / 7.6 J),
+   and even it costs ~3.5× the inference it chooses and overruns the 1 s slot.
+3. Implementation caveat, recorded: choice mode re-runs the full prompt per
+   option (faithful to the current llm_policy backend). Prompt-KV reuse would
+   collapse choice toward generate cost — the measured number prices the
+   implementation, not the theoretical minimum.
+4. The board torch build has no torch.distributed, so transformers'
+   ``generate()`` is unusable there; the measurement uses a manual greedy loop
+   (same compute). numpy from pip must NOT shadow the system numpy
+   (``typeDict`` API removal breaks the NVIDIA stack) — both recorded as
+   board gotchas.
+
+# Orin catalog campaign @ MAXN (2026-08-24) — second board, one mode
+
+First catalog-workload data on the AGX Orin: all 19 workloads × 3 reps at the
+mode the board was found in (MAXN; Orin mode changes need reboots, deferred).
+Setup was fully NVMe-hosted (`/mnt/work/aerobench`) because the shared rootfs
+is at 0 bytes free (other users' data — untouched); board stack: py3.10,
+torch 2.8 cu126 (preserved in ~/.local), ORT 1.23.2 + compressai 1.2.6 in a
+--target dir. Raws: `results/jetson_power/raw_catalog_orin/` — NEVER pooled
+with Xavier directories.
+
+Cross-board findings:
+
+1. **The published-w8a8 CPU loss holds on the second board too**: dlv3+ 232 vs
+   190 ms, SegFormer 257 vs 127 ms (×2.0!), FFNet 514 vs 441 ms — on modern
+   A78AE cores with a current ORT (1.23). Two boards, two ORT generations,
+   eight+one modes: int8-on-CPU is a uniform regression for these artifacts.
+2. **Orin's CPU changes the ONNX rows' mission viability**: 4–8× faster than
+   Xavier (dlv3+ 232 ms vs 932; FFNet 514 vs 1855) — every ONNX row fits the
+   1 Hz cadence on Orin at MAXN. Config viability is a board property, again.
+3. Split heads are almost free on Orin (GHND 3.3 ms / 0.09 J; FCM 29 ms) and
+   reproduce the exact wire payloads byte-for-byte (21.5 / 2.3 / 39.6 /
+   4190.2 KB) — the transcription verification holds across boards.
+4. Operating-point nuance: lraspp fp16 is SLIGHTLY SLOWER than fp32 on Orin
+   MAXN (16.1 vs 14.7 ms) — fp16 does not help models this small there, while
+   halving dlv3 (101→54 ms).
+
+Gotchas recorded for future Orin sessions: rootfs 0 bytes → every python
+invocation needs TMPDIR on the NVMe; pip --target pulls its own torch (delete
+torch*/nvidia*/triton* from the target dir, but keep torch_geometric); pip's
+numpy must not shadow the system stack.

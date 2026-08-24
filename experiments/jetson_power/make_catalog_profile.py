@@ -241,6 +241,17 @@ ONNX_ROWS += [
 ]
 
 
+#: config_id -> catalog-campaign workload for grounding the ONNX rows on the board.
+ONNX_ROW_CELLS = {
+    "local_dlv3plus_w8a8": "onnx_dlv3plus_w8a8",
+    "local_dlv3plus_fp32_onnx": "onnx_dlv3plus_float",
+    "local_segformer_w8a8": "onnx_segformer_w8a8",
+    "local_segformer_fp32_onnx": "onnx_segformer_float",
+    "local_ffnet40s_w8a8": "onnx_ffnet40s_w8a8",
+    "local_ffnet40s_fp32_onnx": "onnx_ffnet40s_float",
+}
+
+
 def _resolution_tier_rows(configs: list[dict], cells: dict, mode: str) -> list[dict]:
     by_id = {config["config_id"]: config for config in configs}
     rows = []
@@ -311,16 +322,32 @@ def build_profile(mode: str, extended: bool = False) -> Path:
                 "energy_j_per_call": row["energy_j_per_call"],
                 "source_cell": f"{mode}/(resolution-tier sweep)",
             }
-        scenario["executor_configs"].extend(json.loads(json.dumps(ONNX_ROWS)))
-        for row in ONNX_ROWS:
-            grounded[row["config_id"]] = {
-                "mission_latency_s": row["mission_latency_s"],
-                "energy_j_per_call": row["energy_j_per_call"],
-                "source_cell": (
-                    "CONFIGURED STAND-IN (Mac CPU wall-clock; energy designed) — "
-                    "PENDING board measurement"
-                ),
-            }
+        onnx_rows = json.loads(json.dumps(ONNX_ROWS))
+        for row in onnx_rows:
+            workload = ONNX_ROW_CELLS[row["config_id"]]
+            key = f"{mode}/{workload}"
+            if key in cells:
+                # Board-grounded (2026-08-24 campaign): onnxruntime 1.18.1 CPU EP on
+                # the Xavier's own cores — the execution path the row actually uses.
+                cell = cells[key]
+                row["mission_latency_s"] = round(cell["latency_ms"]["mean"] / 1000.0, 3)
+                row["energy_j_per_call"] = round(cell["energy_marginal_j"]["mean"], 3)
+                grounded[row["config_id"]] = {
+                    "mission_latency_s": row["mission_latency_s"],
+                    "latency_rep_std_ms": round(cell["latency_ms"]["std"], 1),
+                    "energy_j_per_call": row["energy_j_per_call"],
+                    "source_cell": f"{key} (onnxruntime 1.18.1 CPU EP)",
+                }
+            else:
+                grounded[row["config_id"]] = {
+                    "mission_latency_s": row["mission_latency_s"],
+                    "energy_j_per_call": row["energy_j_per_call"],
+                    "source_cell": (
+                        "CONFIGURED STAND-IN (Mac CPU wall-clock; energy designed) — "
+                        "board cell missing for this mode"
+                    ),
+                }
+        scenario["executor_configs"].extend(onnx_rows)
     suffix = "xavier" if mode == "MODE_30W_ALL" else f"xavier_{mode.lower()}"
     if extended:
         suffix += "_ext"

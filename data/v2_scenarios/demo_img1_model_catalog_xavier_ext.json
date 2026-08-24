@@ -575,8 +575,8 @@
       "config_id": "local_dlv3plus_w8a8",
       "model_strategy_id": "QAIHUB_DLV3PLUS_MOBILENET_W8A8",
       "kind": "onnx_semantic_segmentation",
-      "mission_latency_s": 0.146,
-      "energy_j_per_call": 1.0,
+      "mission_latency_s": 0.932,
+      "energy_j_per_call": 2.338,
       "communication_mb_per_call": 0.0,
       "quality_tier": "medium",
       "parameters": {
@@ -593,8 +593,8 @@
       "config_id": "local_dlv3plus_fp32_onnx",
       "model_strategy_id": "QAIHUB_DLV3PLUS_MOBILENET_FLOAT",
       "kind": "onnx_semantic_segmentation",
-      "mission_latency_s": 0.136,
-      "energy_j_per_call": 1.2,
+      "mission_latency_s": 0.826,
+      "energy_j_per_call": 2.103,
       "communication_mb_per_call": 0.0,
       "quality_tier": "medium",
       "parameters": {
@@ -611,8 +611,8 @@
       "config_id": "local_segformer_w8a8",
       "model_strategy_id": "QAIHUB_SEGFORMER_B0_ADE_W8A8",
       "kind": "onnx_semantic_segmentation",
-      "mission_latency_s": 0.098,
-      "energy_j_per_call": 0.8,
+      "mission_latency_s": 0.82,
+      "energy_j_per_call": 1.927,
       "communication_mb_per_call": 0.0,
       "quality_tier": "medium",
       "parameters": {
@@ -629,8 +629,8 @@
       "config_id": "local_segformer_fp32_onnx",
       "model_strategy_id": "QAIHUB_SEGFORMER_B0_ADE_FLOAT",
       "kind": "onnx_semantic_segmentation",
-      "mission_latency_s": 0.069,
-      "energy_j_per_call": 0.9,
+      "mission_latency_s": 0.594,
+      "energy_j_per_call": 1.239,
       "communication_mb_per_call": 0.0,
       "quality_tier": "medium",
       "parameters": {
@@ -647,8 +647,8 @@
       "config_id": "local_ffnet40s_w8a8",
       "model_strategy_id": "QAIHUB_FFNET_40S_CITYSCAPES_W8A8",
       "kind": "onnx_semantic_segmentation",
-      "mission_latency_s": 0.318,
-      "energy_j_per_call": 3.0,
+      "mission_latency_s": 1.855,
+      "energy_j_per_call": 4.765,
       "communication_mb_per_call": 0.0,
       "quality_tier": "medium",
       "parameters": {
@@ -665,8 +665,8 @@
       "config_id": "local_ffnet40s_fp32_onnx",
       "model_strategy_id": "QAIHUB_FFNET_40S_CITYSCAPES_FLOAT",
       "kind": "onnx_semantic_segmentation",
-      "mission_latency_s": 0.408,
-      "energy_j_per_call": 3.6,
+      "mission_latency_s": 1.729,
+      "energy_j_per_call": 4.294,
       "communication_mb_per_call": 0.0,
       "quality_tier": "medium",
       "parameters": {
@@ -779,34 +779,40 @@
           "source_cell": "MODE_30W_ALL/(resolution-tier sweep)"
         },
         "local_dlv3plus_w8a8": {
-          "mission_latency_s": 0.146,
-          "energy_j_per_call": 1.0,
-          "source_cell": "CONFIGURED STAND-IN (Mac CPU wall-clock; energy designed) \u2014 PENDING board measurement"
+          "mission_latency_s": 0.932,
+          "latency_rep_std_ms": 14.5,
+          "energy_j_per_call": 2.338,
+          "source_cell": "MODE_30W_ALL/onnx_dlv3plus_w8a8 (onnxruntime 1.18.1 CPU EP)"
         },
         "local_dlv3plus_fp32_onnx": {
-          "mission_latency_s": 0.136,
-          "energy_j_per_call": 1.2,
-          "source_cell": "CONFIGURED STAND-IN (Mac CPU wall-clock; energy designed) \u2014 PENDING board measurement"
+          "mission_latency_s": 0.826,
+          "latency_rep_std_ms": 0.7,
+          "energy_j_per_call": 2.103,
+          "source_cell": "MODE_30W_ALL/onnx_dlv3plus_float (onnxruntime 1.18.1 CPU EP)"
         },
         "local_segformer_w8a8": {
-          "mission_latency_s": 0.098,
-          "energy_j_per_call": 0.8,
-          "source_cell": "CONFIGURED STAND-IN (Mac CPU wall-clock; energy designed) \u2014 PENDING board measurement"
+          "mission_latency_s": 0.82,
+          "latency_rep_std_ms": 8.0,
+          "energy_j_per_call": 1.927,
+          "source_cell": "MODE_30W_ALL/onnx_segformer_w8a8 (onnxruntime 1.18.1 CPU EP)"
         },
         "local_segformer_fp32_onnx": {
-          "mission_latency_s": 0.069,
-          "energy_j_per_call": 0.9,
-          "source_cell": "CONFIGURED STAND-IN (Mac CPU wall-clock; energy designed) \u2014 PENDING board measurement"
+          "mission_latency_s": 0.594,
+          "latency_rep_std_ms": 5.8,
+          "energy_j_per_call": 1.239,
+          "source_cell": "MODE_30W_ALL/onnx_segformer_float (onnxruntime 1.18.1 CPU EP)"
         },
         "local_ffnet40s_w8a8": {
-          "mission_latency_s": 0.318,
-          "energy_j_per_call": 3.0,
-          "source_cell": "CONFIGURED STAND-IN (Mac CPU wall-clock; energy designed) \u2014 PENDING board measurement"
+          "mission_latency_s": 1.855,
+          "latency_rep_std_ms": 9.0,
+          "energy_j_per_call": 4.765,
+          "source_cell": "MODE_30W_ALL/onnx_ffnet40s_w8a8 (onnxruntime 1.18.1 CPU EP)"
         },
         "local_ffnet40s_fp32_onnx": {
-          "mission_latency_s": 0.408,
-          "energy_j_per_call": 3.6,
-          "source_cell": "CONFIGURED STAND-IN (Mac CPU wall-clock; energy designed) \u2014 PENDING board measurement"
+          "mission_latency_s": 1.729,
+          "latency_rep_std_ms": 4.8,
+          "energy_j_per_call": 4.294,
+          "source_cell": "MODE_30W_ALL/onnx_ffnet40s_float (onnxruntime 1.18.1 CPU EP)"
         }
       },
       "flight_power_w": {

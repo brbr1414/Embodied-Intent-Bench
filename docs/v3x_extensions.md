@@ -345,6 +345,13 @@ Findings, each labelled as behaviour of one small model on one prompt design:
   for: a policy must pay its own latency bill, and this one cannot. (A Jetson
   measurement of the same model would be slower still; the Mac number is a
   lower bound on the problem, not a board claim.)
+- **Board grounding (2026-08-24)**: on the Xavier itself, one 1.5B choice-mode
+  decision measures **17.6 s / 217 J marginal** — ~100× the energy of the
+  strong-fp16 inference it selects, and a 440-decision mission would spend more
+  than the entire 21 Wh battery on deciding. Generate mode is the only shape in
+  deployable range (0.5B: 1.08 s / 7.6 J) and still overruns the 1 s slot. The
+  Mac wall-clock used in the cost-charged variant understated board latency
+  ×5.3 (RESULTS.md "Xavier LLM policy decision cost").
 - Rule-family baselines beat the 1.5B LLM on this scenario at ~10⁴× less
   decision latency. Whether a larger model or a better prompt closes the
   judgment gap — and whether anything closes the cost gap — is the open
@@ -480,3 +487,20 @@ Two honest findings:
   near-blind on aerial content (0.071) while ADE-trained SegFormer fires
   everywhere — neither number is perception evidence, but together they bracket
   how differently "efficient segmentation" checkpoints fail off-domain.
+
+### 6.6 Board grounding of the ONNX rows (2026-08-24 campaign)
+
+The extended-catalog campaign (RESULTS.md "Xavier extended-catalog campaign")
+replaced the ONNX rows' Mac stand-ins with Xavier measurements (onnxruntime
+1.18.1 CPU EP — the row's real execution path): at MODE_30W_ALL the six rows
+are 0.59–1.86 s / 1.2–4.8 J tiers, and **published w8a8 is slower than float in
+every mode for every model on this board's CPU runtime** (the quantization's
+latency benefit targets NPUs; adopting the artifact does not import the
+accelerator it was quantized for). Grand-tour re-runs with grounded costs:
+SegFormer-w8a8's spray "SUCCESS" survives (recall 0.786, 797 FPs, min_margin
++0.097 — the §6.5 contract finding is robust to real costs); FFNet-40S now
+skips 220 of 440 slots as a 1.855 s tier (recall 0.071); DeepLabV3+-w8a8 fits
+the 1 Hz cadence at 0.932 s and remains a quality near-miss (0.571, −0.071).
+Catalog role of the ONNX family after grounding: honest architecture/precision
+diversity — every ONNX row is slower AND costlier than CUDA
+`local_strong_fp16`, and the catalog says so rather than hiding it.
